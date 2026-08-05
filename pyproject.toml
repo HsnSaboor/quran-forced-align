@@ -1,0 +1,28 @@
+[project]
+name = "quran-forced-align"
+version = "0.1.0"
+description = "CTC forced alignment for Quran surah audio -> word-level timed SRT + JSON, with hifz-practice repeat detection"
+readme = "README.md"
+authors = [
+    { name = "zaibihsn", email = "170924817+zaibihsn@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "onnxruntime==1.28.0",
+    "kaldi-native-fbank==1.22.3",
+    "quran-transcript==0.5.2",
+    "numpy==2.5.1",
+]
+
+[project.scripts]
+quran-forced-align = "quran_forced_align.cli:main"
+quran-forced-align-batch = "quran_forced_align.batch_cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.3,<0.11.0"]
+build-backend = "uv_build"

@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Quran Forced-Alignment Word Player</title>
+
+<!-- Amiri: the Quran-Arabic-optimized typeface, hosted on Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          amiri: ['Amiri', 'serif'],
+          ui: ['Inter', 'sans-serif'],
+        },
+      },
+    },
+  };
+</script>
+
+<style>
+  /* Word highlight transition -- kept out of Tailwind's utility set since it
+     needs to be smooth/cheap on every timeupdate tick (fires ~4x/sec). */
+  .word {
+    transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+  }
+  .word.current {
+    background-color: rgb(16 185 129 / 0.22); /* emerald-500 @ 22% */
+    color: rgb(5 150 105); /* emerald-600 */
+    transform: scale(1.04);
+  }
+  .word.repeat-flagged {
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: rgb(217 119 6); /* amber-600 */
+    text-decoration-thickness: 2px;
+  }
+  .word.repeat-flagged.current {
+    background-color: rgb(217 119 6 / 0.22);
+    color: rgb(180 83 9); /* amber-700 */
+  }
+  /* Amiri renders noticeably better at larger sizes -- this app is built
+     around one big continuous reading pane, not compact UI text. */
+  .quran-text {
+    font-family: 'Amiri', serif;
+    line-height: 2.6;
+    font-size: 1.9rem;
+  }
+  @media (min-width: 768px) {
+    .quran-text { font-size: 2.35rem; }
+  }
+  .ayah-end-marker {
+    font-family: 'Amiri', serif;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 0.35rem;
+    color: rgb(120 113 108); /* stone-500 */
+    font-size: 1.1rem;
+  }
+
+  /* Repeat range overlay on the custom timeline -- one absolutely
+     positioned <div> per detected repeat, spanning from the first
+     occurrence's start to the flagged second occurrence's end. */
+  .timeline-repeat-range {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background-color: rgb(217 119 6 / 0.30); /* amber-600 @ 30% */
+    border-left: 1px solid rgb(217 119 6 / 0.6);
+    border-right: 1px solid rgb(217 119 6 / 0.6);
+  }
+  /* Tick mark at each repeat site's first-occurrence start -- a thin
+     brighter sliver on top of the range fill so the exact anchor point
+     (where "Next repeat" will seek to, minus the 5s pad) is visible even
+     when ranges are only a couple of px wide at full-surah zoom. */
+  .timeline-repeat-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: rgb(180 83 9); /* amber-700 */
+  }
+</style>
+</head>
+
+<body class="bg-stone-50 text-stone-900 font-ui min-h-screen">
+
+  <div class="max-w-4xl mx-auto px-4 py-6 md:py-10" dir="ltr">
+
+    <header class="mb-6">
+      <h1 class="text-xl md:text-2xl font-semibold text-stone-800">Forced-Alignment Word Player</h1>
+      <p class="text-sm text-stone-500 mt-1">
+        Word-level CTC forced-alignment output, played back with live word highlighting.
+        Data from <code class="bg-stone-100 px-1 rounded">srt_output/*.json</code> +
+        <code class="bg-stone-100 px-1 rounded">audio/*.mp3</code>.
+      </p>
+    </header>
+
+    <!-- Controls -->
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+      <label class="text-sm font-medium text-stone-600" for="surah-select">Surah</label>
+      <select id="surah-select"
+        class="bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
+               focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500">
+      </select>
+
+      <label class="text-sm font-medium text-stone-600" for="reciter-select">Reciter</label>
+      <select id="reciter-select"
+        class="bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
+               focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500">
+      </select>
+
+      <button id="speed-btn"
+        class="ml-auto bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
+               hover:bg-stone-50 active:bg-stone-100 transition-colors">
+        1.0x
+      </button>
+
+      <label class="flex items-center gap-2 text-sm text-stone-600 select-none cursor-pointer">
+        <input id="autoscroll-toggle" type="checkbox" checked
+          class="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500/40" />
+        Auto-scroll
+      </label>
+    </div>
+
+    <!-- Audio player -->
+    <div class="bg-white border border-stone-200 rounded-xl shadow-sm p-3 mb-6">
+      <audio id="audio" class="w-full" controls preload="metadata"></audio>
+
+      <!-- Custom repeat-aware timeline. The native <audio> scrubber above
+           has no way to show repeat regions or drop tick markers, so this
+           is a second, purpose-built bar underneath it: click-to-seek,
+           colored overlays for each detected repeat's full span (first
+           occurrence -> end of the flagged second occurrence), and a small
+           tick at each repeat site's first-occurrence start. -->
+      <div class="mt-3">
+        <div id="timeline" class="relative h-6 rounded-lg bg-stone-100 cursor-pointer select-none overflow-hidden">
+          <div id="timeline-repeats" class="absolute inset-y-0 left-0 w-full"></div>
+          <div id="timeline-playhead"
+               class="absolute inset-y-0 w-0.5 bg-stone-700 pointer-events-none"
+               style="left: 0%"></div>
+        </div>
+        <div class="flex items-center justify-between mt-2">
+          <button id="prev-repeat-btn"
+            class="flex items-center gap-1.5 bg-white border border-stone-300 rounded-lg px-3 py-1.5 text-sm shadow-sm
+                   hover:bg-stone-50 active:bg-stone-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            <span aria-hidden="true">&#8592;</span> Prev repeat
+          </button>
+          <span id="repeat-count" class="text-xs text-stone-400 font-mono"></span>
+          <button id="next-repeat-btn"
+            class="flex items-center gap-1.5 bg-white border border-stone-300 rounded-lg px-3 py-1.5 text-sm shadow-sm
+                   hover:bg-stone-50 active:bg-stone-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            Next repeat <span aria-hidden="true">&#8594;</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="status" class="text-xs text-stone-400 mt-2 font-mono"></div>
+    </div>
+
+    <!-- Legend -->
+    <div class="flex flex-wrap gap-4 mb-4 text-xs text-stone-500">
+      <span class="flex items-center gap-1.5">
+        <span class="inline-block w-3 h-3 rounded-sm" style="background-color: rgb(16 185 129 / 0.35)"></span>
+        currently playing word
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span class="inline-block w-3 h-3 border-b-2 border-dotted" style="border-color: rgb(217 119 6)"></span>
+        detected repeat (hifz practice)
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span class="inline-block w-3 h-3 rounded-sm" style="background-color: rgb(217 119 6 / 0.35)"></span>
+        repeat range on timeline
+      </span>
+      <span>Click any word (or the timeline) to seek playback there.</span>
+    </div>
+
+    <!-- Quran text pane -->
+    <main class="bg-white border border-stone-200 rounded-2xl shadow-sm p-6 md:p-10">
+      <div id="quran-text" class="quran-text text-right" dir="rtl">
+        <span class="text-stone-400 text-base font-ui">Loading…</span>
+      </div>
+    </main>
+
+    <footer class="mt-8 text-xs text-stone-400 text-center">
+      Serve this directory with <code class="bg-stone-100 px-1 rounded">python -m http.server</code>
+      from the repo root (not <code>file://</code> -- browsers block <code>fetch()</code> of local JSON
+      under the file protocol).
+    </footer>
+  </div>
+
+<script>
+(() => {
+  'use strict';
+
+  // Reciter metadata (id -> display label). `id` is exactly the filename
+  // suffix used below: audio/{surah:03d}_{id}.mp3, srt_output/{surah:03d}_{id}.json.
+  const RECITERS = {
+    alafasy: 'Mishary Alafasy',
+    basit: 'Abdul Basit (murattal)',
+  };
+
+  // Surah -> [reciter ids] with generated alignment output for that surah.
+  // Kept as an explicit map (rather than probing the filesystem, which
+  // browsers can't do) so a missing file fails loudly via the fetch()
+  // below instead of silently omitting an option. Every surah currently
+  // has 'alafasy'; 'basit' is only present for surah 66 so far.
+  const SURAH_RECITERS = {
+    66: ['alafasy', 'basit'],
+    67: ['alafasy'],
+    68: ['alafasy'],
+    69: ['alafasy'],
+    70: ['alafasy'],
+    71: ['alafasy'],
+    72: ['alafasy'],
+  };
+  const SURAHS = Object.keys(SURAH_RECITERS).map(Number).sort((a, b) => a - b);
+
+  const els = {
+    select: document.getElementById('surah-select'),
+    reciterSelect: document.getElementById('reciter-select'),
+    audio: document.getElementById('audio'),
+    text: document.getElementById('quran-text'),
+    status: document.getElementById('status'),
+    speedBtn: document.getElementById('speed-btn'),
+    autoscroll: document.getElementById('autoscroll-toggle'),
+    timeline: document.getElementById('timeline'),
+    timelineRepeats: document.getElementById('timeline-repeats'),
+    timelinePlayhead: document.getElementById('timeline-playhead'),
+    prevRepeatBtn: document.getElementById('prev-repeat-btn'),
+    nextRepeatBtn: document.getElementById('next-repeat-btn'),
+    repeatCount: document.getElementById('repeat-count'),
+  };
+
+  // Seek this many seconds before a repeat site's first-occurrence start
+  // when jumping via Prev/Next repeat, so playback has context leading
+  // into the repeat rather than starting mid-phrase. Clamped to >= 0 at
+  // the call site (a repeat near the very start of the surah has no room
+  // for a full 5s of lead-in).
+  const REPEAT_JUMP_LEAD_SEC = 5;
+
+  const SPEEDS = [1.0, 1.25, 1.5, 0.75];
+  let speedIdx = 0;
+
+  /** @type {{word:string,start:number,end:number,sura:number,aya:number,is_repeat:boolean}[]} */
+  let words = [];
+
+  // The visible Quran text renders exactly ONE <span> per real word
+  // position -- never duplicated for a detected repeat's second occurrence
+  // (a hifz-practice repeat is the reciter saying the SAME word again, not
+  // a second word in the text). `wordEls[d]` is that word's single DOM
+  // node; `cueToDisplayIdx[i]` maps EVERY cue in `words` (including
+  // is_repeat=true ones) to the display index `d` of the text span it
+  // should highlight -- so when playback reaches a repeat's second
+  // occurrence, the SAME on-screen word lights up again (the highlight
+  // "moves back" to it), instead of a phantom duplicate word appearing.
+  // Both arrays are (re)built together in renderText().
+  let wordEls = [];
+  let cueToDisplayIdx = [];
+  let currentIdx = -1;   // display index (into wordEls) currently highlighted, or -1
+
+  /** @type {{word:string,aya:number}[]} one entry per unique on-screen word
+   * position, built by buildDisplayMapping -- the text-rendering pass
+   * (renderText) iterates THIS array, not `words`, so a repeat's second
+   * occurrence never produces a second span. */
+  let displayWords = [];
+
+  /** @type {{firstStart:number,firstEnd:number,secondStart:number,secondEnd:number}[]}
+   * One entry per detected repeat SITE (a contiguous run of is_repeat=true
+   * word-cues counts as one site, not one per word -- see groupRepeatSites).
+   * Sorted ascending by firstStart (both by construction: `words` itself is
+   * sorted, and sites are discovered in a single forward pass over it). */
+  let repeatSites = [];
+  let totalDuration = 0; // audio.duration, cached on loadedmetadata (0 until then)
+
+  function pad3(n) { return String(n).padStart(3, '0'); }
+
+  function populateSurahSelect() {
+    for (const s of SURAHS) {
+      const opt = document.createElement('option');
+      opt.value = String(s);
+      opt.textContent = `Surah ${s}`;
+      els.select.appendChild(opt);
+    }
+  }
+
+  /** Rebuild the reciter dropdown's options to match whichever reciters
+   * have data for `surahNum` (see SURAH_RECITERS), preserving the
+   * currently-selected reciter id across the rebuild if it's still
+   * available for the new surah, otherwise falling back to the first
+   * available one. Returns the reciter id that ends up selected. */
+  function populateReciterSelect(surahNum) {
+    const available = SURAH_RECITERS[surahNum] || [];
+    const previouslySelected = els.reciterSelect.value;
+    els.reciterSelect.innerHTML = '';
+    for (const id of available) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = RECITERS[id] || id;
+      els.reciterSelect.appendChild(opt);
+    }
+    const next = available.includes(previouslySelected) ? previouslySelected : available[0];
+    els.reciterSelect.value = next;
+    // A surah with only one reciter doesn't need a dropdown to fiddle
+    // with -- disable it rather than hide it, so its presence (and which
+    // reciter is playing) stays visible at a glance.
+    els.reciterSelect.disabled = available.length <= 1;
+    return next;
+  }
+
+  async function loadSurah(surahNum) {
+    const reciterId = populateReciterSelect(surahNum);
+    return loadSurahAndReciter(surahNum, reciterId);
+  }
+
+  async function loadSurahAndReciter(surahNum, reciterId) {
+    els.status.textContent = `loading surah ${surahNum} (${RECITERS[reciterId] || reciterId})…`;
+    els.text.innerHTML = '<span class="text-stone-400 text-base font-ui">Loading…</span>';
+    currentIdx = -1;
+
+    const jsonPath = `../srt_output/${pad3(surahNum)}_${reciterId}.json`;
+    const audioPath = `../audio/${pad3(surahNum)}_${reciterId}.mp3`;
+
+    const res = await fetch(jsonPath);
+    if (!res.ok) {
+      els.status.textContent = `failed to load ${jsonPath} (HTTP ${res.status})`;
+      return;
+    }
+    words = await res.json();
+    repeatSites = groupRepeatSites(words);
+    ({ displayWords, cueToDisplayIdx } = buildDisplayMapping(words));
+    totalDuration = 0;
+
+    els.audio.src = audioPath;
+    els.audio.load();
+
+    renderText();
+    renderTimeline();
+    updateRepeatButtons();
+    els.status.textContent = `${words.length} words loaded, ${repeatSites.length} repeat site(s) — ${jsonPath}`;
+  }
+
+  /** Collapse contiguous runs of `is_repeat=true` word-cues into one "site"
+   * per run, and pair each run with the equal-length run of
+   * is_repeat=false cues immediately preceding it -- that preceding run
+   * is exactly the first occurrence, by construction of the splice step in
+   * repeats.py's detect_and_fix_repeats (each accepted fix appends
+   * "primary copy" cues immediately followed by "repeat copy" cues, same
+   * word count on both sides, and cues stay in start-time sorted order).
+   * Falls back to just the flagged run's own span if -- for any reason --
+   * fewer non-repeat words precede it than the run's length (defensive
+   * only; should not happen against this pipeline's real output). */
+  function groupRepeatSites(ws) {
+    const sites = [];
+    let i = 0;
+    while (i < ws.length) {
+      if (!ws[i].is_repeat) { i++; continue; }
+      let j = i;
+      while (j < ws.length && ws[j].is_repeat) j++;
+      const runLen = j - i;
+      const firstRunStartIdx = i - runLen;
+      let firstStart, firstEnd;
+      if (firstRunStartIdx >= 0) {
+        firstStart = ws[firstRunStartIdx].start;
+        firstEnd = ws[i - 1].end;
+      } else {
+        firstStart = ws[i].start;
+        firstEnd = ws[i].start;
+      }
+      sites.push({
+        firstStart,
+        firstEnd,
+        secondStart: ws[i].start,
+        secondEnd: ws[j - 1].end,
+      });
+      i = j;
+    }
+    return sites;
+  }
+
+  /** Build the "one span per real word" display mapping described at
+   * `displayWords`'s declaration. Every is_repeat=false cue gets its own
+   * new display slot, in order. Every is_repeat=true cue is mapped back
+   * onto the display slot of the corresponding word in the equal-length
+   * run of is_repeat=false cues immediately preceding it (the FIRST
+   * occurrence) -- same pairing logic as groupRepeatSites, just producing
+   * a per-cue index map instead of per-site spans. This is what lets
+   * onTimeUpdate highlight the SAME on-screen word again when playback
+   * reaches a repeat's second occurrence, instead of a duplicate word
+   * needing to exist in the DOM. */
+  function buildDisplayMapping(ws) {
+    const dWords = [];
+    const mapping = new Array(ws.length);
+    let i = 0;
+    while (i < ws.length) {
+      if (!ws[i].is_repeat) {
+        mapping[i] = dWords.length;
+        dWords.push({ word: ws[i].word, aya: ws[i].aya });
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < ws.length && ws[j].is_repeat) j++;
+      const runLen = j - i;
+      const firstRunStartIdx = i - runLen;
+      for (let k = 0; k < runLen; k++) {
+        const cueIdx = i + k;
+        if (firstRunStartIdx >= 0) {
+          // Map onto the display slot already created for the
+          // corresponding first-occurrence word.
+          mapping[cueIdx] = mapping[firstRunStartIdx + k];
+        } else {
+          // Defensive fallback (should not happen against this pipeline's
+          // real output -- see groupRepeatSites' matching comment): no
+          // preceding run to pair with, so this repeat cue gets its own
+          // display slot rather than crashing.
+          mapping[cueIdx] = dWords.length;
+          dWords.push({ word: ws[cueIdx].word, aya: ws[cueIdx].aya });
+        }
+      }
+      i = j;
+    }
+    return { displayWords: dWords, cueToDisplayIdx: mapping };
+  }
+
+  function renderTimeline() {
+    els.timelineRepeats.innerHTML = '';
+    if (!repeatSites.length) return;
+    const totalWordsEnd = words.length ? words[words.length - 1].end : 0;
+    // Use the last word's end as the timeline's 0-100% denominator until
+    // audio.duration is known (loadedmetadata may fire after this render);
+    // updateTimelinePlayhead below re-derives percentages the same way on
+    // every tick, so this only affects the repeat-range overlay's initial
+    // paint, not correctness of the playhead.
+    const denom = totalDuration || totalWordsEnd || 1;
+
+    for (const site of repeatSites) {
+      const startPct = (site.firstStart / denom) * 100;
+      const endPct = (site.secondEnd / denom) * 100;
+      const range = document.createElement('div');
+      range.className = 'timeline-repeat-range';
+      range.style.left = `${startPct}%`;
+      range.style.width = `${Math.max(endPct - startPct, 0.3)}%`;
+      range.title = `repeat: ${site.firstStart.toFixed(1)}s – ${site.secondEnd.toFixed(1)}s`;
+      els.timelineRepeats.appendChild(range);
+
+      const tick = document.createElement('div');
+      tick.className = 'timeline-repeat-tick';
+      tick.style.left = `${startPct}%`;
+      els.timelineRepeats.appendChild(tick);
+    }
+  }
+
+  function updateTimelinePlayhead() {
+    const denom = totalDuration || (words.length ? words[words.length - 1].end : 0) || 1;
+    const pct = Math.min(100, Math.max(0, (els.audio.currentTime / denom) * 100));
+    els.timelinePlayhead.style.left = `${pct}%`;
+  }
+
+  function seekFromTimelineClick(evt) {
+    if (!words.length) return;
+    const rect = els.timeline.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
+    const denom = totalDuration || words[words.length - 1].end || 1;
+    els.audio.currentTime = frac * denom;
+  }
+
+  function updateRepeatButtons() {
+    els.repeatCount.textContent = repeatSites.length
+      ? `${repeatSites.length} repeat site${repeatSites.length === 1 ? '' : 's'} in this surah`
+      : 'no repeats detected in this surah';
+    els.prevRepeatBtn.disabled = repeatSites.length === 0;
+    els.nextRepeatBtn.disabled = repeatSites.length === 0;
+  }
+
+  // Index into `repeatSites` of the site the "Prev/Next repeat" buttons last
+  // jumped to, or -1 if the playhead's current position wasn't reached via
+  // those buttons (initial load, a manual word/timeline click, or dragging
+  // the native scrubber). Tracking this explicitly -- rather than comparing
+  // `els.audio.currentTime` against `site.firstStart` on every click -- is
+  // required because a jump seeks to `firstStart - REPEAT_JUMP_LEAD_SEC`,
+  // i.e. BEFORE the site's own firstStart: comparing the post-jump
+  // currentTime against firstStart again on the next click would find the
+  // SAME site every time (currentTime < firstStart still), so repeated
+  // clicks could never advance past the very first site. See
+  // `resetRepeatTrackingOnManualSeek` for how this gets invalidated on any
+  // seek this function didn't itself cause.
+  let currentRepeatSiteIdx = -1;
+  let programmaticRepeatSeek = false;
+
+  /** Jump to `firstStart - REPEAT_JUMP_LEAD_SEC` (clamped to >= 0) for the
+   * next/previous repeat site, cycling with wraparound. If the playhead
+   * wasn't already sitting at a site reached via these buttons (tracked via
+   * `currentRepeatSiteIdx`), falls back to locating the nearest site
+   * relative to the current playhead time -- so clicking Next/Prev after a
+   * manual seek (word click, timeline click, native scrubber drag) starts
+   * from where the user actually is, not wherever the buttons last left
+   * off. No-op if there are no repeats. */
+  function jumpToRepeat(direction) {
+    if (!repeatSites.length) return;
+
+    let targetIdx;
+    if (currentRepeatSiteIdx >= 0) {
+      targetIdx = (currentRepeatSiteIdx + direction + repeatSites.length) % repeatSites.length;
+    } else {
+      const t = els.audio.currentTime;
+      const EPS = 0.05;
+      if (direction > 0) {
+        const foundIdx = repeatSites.findIndex(s => s.firstStart > t + EPS);
+        targetIdx = foundIdx >= 0 ? foundIdx : 0;
+      } else {
+        let lastEarlier = -1;
+        for (let k = 0; k < repeatSites.length; k++) {
+          if (repeatSites[k].firstStart < t - EPS) lastEarlier = k;
+        }
+        targetIdx = lastEarlier >= 0 ? lastEarlier : repeatSites.length - 1;
+      }
+    }
+
+    currentRepeatSiteIdx = targetIdx;
+    const target = repeatSites[targetIdx];
+    programmaticRepeatSeek = true;
+    els.audio.currentTime = Math.max(0, target.firstStart - REPEAT_JUMP_LEAD_SEC);
+    els.audio.play();
+  }
+
+  /** Invalidate `currentRepeatSiteIdx` on any seek NOT caused by
+   * jumpToRepeat itself, so Next/Prev re-anchors off the real playhead
+   * position after a manual word click, timeline click, or native
+   * scrubber drag instead of continuing to cycle from the last
+   * button-driven position. */
+  function resetRepeatTrackingOnManualSeek() {
+    if (programmaticRepeatSeek) {
+      programmaticRepeatSeek = false;
+      return;
+    }
+    currentRepeatSiteIdx = -1;
+  }
+
+  function renderText() {
+    els.text.innerHTML = '';
+    wordEls = new Array(displayWords.length);
+
+    // Which display slots are the target of at least one is_repeat=true
+    // cue -- used only to add the dotted "repeat-flagged" underline to the
+    // ACTUAL Quran word (once), never to render a second copy of it.
+    const repeatedDisplaySlots = new Set();
+    words.forEach((w, i) => {
+      if (w.is_repeat) repeatedDisplaySlots.add(cueToDisplayIdx[i]);
+    });
+
+    // First cue-index at which each display slot's word starts playing
+    // (its first occurrence) -- used so clicking a word seeks to where it
+    // is first recited, not to a later repeat's timestamp.
+    const displaySlotFirstCueStart = new Array(displayWords.length).fill(null);
+    words.forEach((w, i) => {
+      const d = cueToDisplayIdx[i];
+      if (displaySlotFirstCueStart[d] === null) displaySlotFirstCueStart[d] = w.start;
+    });
+
+    let currentAya = null;
+    let ayaWrap = null;
+
+    displayWords.forEach((w, d) => {
+      if (w.aya !== currentAya) {
+        // Close previous ayah with its end-of-verse marker (only if one was
+        // open AND it was a real ayah -- aya 0 is the istiaatha preamble
+        // ("أَعُوذُ بِٱللَّهِ...") which the reference builder prepends
+        // before ayah 1 and isn't part of the Quranic text, so it gets no
+        // ۝ marker).
+        if (ayaWrap && currentAya !== 0) {
+          const marker = document.createElement('span');
+          marker.className = 'ayah-end-marker';
+          marker.textContent = `\u06DD${toArabicIndicDigits(currentAya)}`; // ۝ + ayah number
+          ayaWrap.appendChild(marker);
+        }
+        currentAya = w.aya;
+        ayaWrap = document.createElement('span');
+        ayaWrap.className = 'ayah-group';
+        ayaWrap.dataset.aya = String(currentAya);
+        els.text.appendChild(ayaWrap);
+      }
+
+      const isRepeated = repeatedDisplaySlots.has(d);
+      const span = document.createElement('span');
+      span.className = 'word cursor-pointer rounded px-0.5' + (isRepeated ? ' repeat-flagged' : '');
+      span.textContent = w.word;
+      span.title = isRepeated
+        ? 'reciter repeats this word/phrase later (hifz practice) — click to play from its first occurrence'
+        : '';
+      span.addEventListener('click', () => {
+        els.audio.currentTime = displaySlotFirstCueStart[d] ?? 0;
+        els.audio.play();
+      });
+
+      ayaWrap.appendChild(span);
+      ayaWrap.appendChild(document.createTextNode(' '));
+      wordEls[d] = span;
+    });
+
+    // Close the final ayah's marker.
+    if (ayaWrap && currentAya !== null) {
+      const marker = document.createElement('span');
+      marker.className = 'ayah-end-marker';
+      marker.textContent = `\u06DD${toArabicIndicDigits(currentAya)}`;
+      ayaWrap.appendChild(marker);
+    }
+  }
+
+  const ARABIC_INDIC_DIGITS = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+  function toArabicIndicDigits(n) {
+    return String(n).split('').map(d => ARABIC_INDIC_DIGITS[Number(d)] ?? d).join('');
+  }
+
+  /** Binary search over `words` (sorted, non-overlapping by construction --
+   * see repeats.py's splice step) for the index whose [start, end) contains
+   * `t`, or -1 if `t` falls in a gap (istiaatha lead-in, inter-word
+   * silence, or past the last word). */
+  function findWordIndexAtTime(t) {
+    let lo = 0, hi = words.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const w = words[mid];
+      if (t < w.start) hi = mid - 1;
+      else if (t >= w.end) lo = mid + 1;
+      else return mid;
+    }
+    return -1;
+  }
+
+  function onTimeUpdate() {
+    const t = els.audio.currentTime;
+    const cueIdx = findWordIndexAtTime(t);
+    // Map the CUE index (a position in `words`, which still has one entry
+    // per occurrence -- including repeats) to its DISPLAY index (a
+    // position in `displayWords`/`wordEls`, which has exactly one span per
+    // real on-screen word). This is what makes the highlight jump BACK to
+    // the same word when playback reaches a repeat's second occurrence,
+    // rather than needing a second span to exist for it.
+    const idx = cueIdx >= 0 ? cueToDisplayIdx[cueIdx] : -1;
+    if (idx === currentIdx) return;
+
+    if (currentIdx >= 0 && wordEls[currentIdx]) {
+      wordEls[currentIdx].classList.remove('current');
+    }
+    currentIdx = idx;
+    if (currentIdx >= 0 && wordEls[currentIdx]) {
+      const el = wordEls[currentIdx];
+      el.classList.add('current');
+      if (els.autoscroll.checked) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      }
+    }
+  }
+
+  els.speedBtn.addEventListener('click', () => {
+    speedIdx = (speedIdx + 1) % SPEEDS.length;
+    els.audio.playbackRate = SPEEDS[speedIdx];
+    els.speedBtn.textContent = `${SPEEDS[speedIdx].toFixed(2).replace(/0$/, '')}x`;
+  });
+
+  els.select.addEventListener('change', () => loadSurah(Number(els.select.value)));
+  els.reciterSelect.addEventListener('change', () =>
+    loadSurahAndReciter(Number(els.select.value), els.reciterSelect.value));
+  els.audio.addEventListener('timeupdate', () => { onTimeUpdate(); updateTimelinePlayhead(); });
+  // Fires on EVERY currentTime assignment (word click, timeline click,
+  // native scrubber drag, AND jumpToRepeat's own seek) -- the single
+  // choke point needed to invalidate currentRepeatSiteIdx on anything
+  // that isn't jumpToRepeat itself, see that flag's own comment.
+  els.audio.addEventListener('seeking', resetRepeatTrackingOnManualSeek);
+  els.audio.addEventListener('loadedmetadata', () => {
+    totalDuration = els.audio.duration || 0;
+    renderTimeline();       // re-paint repeat ranges against the now-known real duration
+    updateTimelinePlayhead();
+  });
+  els.timeline.addEventListener('click', seekFromTimelineClick);
+  els.prevRepeatBtn.addEventListener('click', () => jumpToRepeat(-1));
+  els.nextRepeatBtn.addEventListener('click', () => jumpToRepeat(1));
+
+  populateSurahSelect();
+  loadSurah(SURAHS[0]);
+})();
+</script>
+</body>
+</html>
