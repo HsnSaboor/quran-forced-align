@@ -168,6 +168,15 @@ duration) but NOT yet manually spot-checked by ear the way surahs 66-72
 were -- treat the `is_repeat` flags for surah 2 as unverified until that
 pass is done, same caveat as the 0-flag surahs above.
 
+### Surah 35 (Fatir), Abdullah Mohsin Al-Kasim (murattal)
+
+| reciter | audio length | words | repeats flagged | monotonic violations |
+|---------|-------------|-------|------------------|-----------------------|
+| Abdullah Mohsin Al-Kasim | ~12.9 min | 780 | 0 | 0 |
+
+A standard (non-hifz-practice) murattal recitation -- 0 repeats flagged is
+expected here, not a detector gap.
+
 ## Model license
 
 The bundled acoustic model (`Muno459/zipformer_p-arabic-v2`) carries a
