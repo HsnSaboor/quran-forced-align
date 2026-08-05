@@ -117,53 +117,30 @@
                focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500">
       </select>
 
-      <button id="speed-btn"
-        class="ml-auto bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
-               hover:bg-stone-50 active:bg-stone-100 transition-colors">
-        1.0x
-      </button>
-
-      <label class="flex items-center gap-2 text-sm text-stone-600 select-none cursor-pointer">
-        <input id="autoscroll-toggle" type="checkbox" checked
+      <label class="ml-auto flex items-center gap-2 text-sm text-stone-600 select-none cursor-pointer">
+        <input id="autoscroll-toggle" type="checkbox"
           class="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500/40" />
         Auto-scroll
       </label>
     </div>
 
-    <!-- Audio player -->
-    <div class="bg-white border border-stone-200 rounded-xl shadow-sm p-3 mb-6">
-      <audio id="audio" class="w-full" controls preload="metadata"></audio>
+    <!-- Visually hidden (but NOT display:none) native <audio> element --
+         still does all the real playback work (decoding, currentTime,
+         play/pause state), just with no visible native UI of its own. All
+         visible transport controls live in the floating dock at the bottom
+         of the viewport instead (see #player-dock), which is reachable no
+         matter how far the user has scrolled through a long surah's text.
+         IMPORTANT: must not use `display:none` (Tailwind's `hidden` class)
+         -- Chrome deprioritizes network/buffering activity on display:none
+         media elements, which made currentTime seeks silently fail to
+         actually buffer/seek (seekable stayed [0,0] even after assigning
+         currentTime). Absolute-positioned + zero-size + clipped keeps it
+         painted (off-screen, not display:none) so buffering/seeking behave
+         normally -- the standard "visually hidden but not display:none"
+         pattern (same idea as sr-only utility classes). -->
+    <audio id="audio" class="absolute w-0 h-0 overflow-hidden opacity-0 pointer-events-none" preload="metadata"></audio>
 
-      <!-- Custom repeat-aware timeline. The native <audio> scrubber above
-           has no way to show repeat regions or drop tick markers, so this
-           is a second, purpose-built bar underneath it: click-to-seek,
-           colored overlays for each detected repeat's full span (first
-           occurrence -> end of the flagged second occurrence), and a small
-           tick at each repeat site's first-occurrence start. -->
-      <div class="mt-3">
-        <div id="timeline" class="relative h-6 rounded-lg bg-stone-100 cursor-pointer select-none overflow-hidden">
-          <div id="timeline-repeats" class="absolute inset-y-0 left-0 w-full"></div>
-          <div id="timeline-playhead"
-               class="absolute inset-y-0 w-0.5 bg-stone-700 pointer-events-none"
-               style="left: 0%"></div>
-        </div>
-        <div class="flex items-center justify-between mt-2">
-          <button id="prev-repeat-btn"
-            class="flex items-center gap-1.5 bg-white border border-stone-300 rounded-lg px-3 py-1.5 text-sm shadow-sm
-                   hover:bg-stone-50 active:bg-stone-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            <span aria-hidden="true">&#8592;</span> Prev repeat
-          </button>
-          <span id="repeat-count" class="text-xs text-stone-400 font-mono"></span>
-          <button id="next-repeat-btn"
-            class="flex items-center gap-1.5 bg-white border border-stone-300 rounded-lg px-3 py-1.5 text-sm shadow-sm
-                   hover:bg-stone-50 active:bg-stone-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            Next repeat <span aria-hidden="true">&#8594;</span>
-          </button>
-        </div>
-      </div>
-
-      <div id="status" class="text-xs text-stone-400 mt-2 font-mono"></div>
-    </div>
+    <div id="status" class="text-xs text-stone-400 mb-4 font-mono"></div>
 
     <!-- Legend -->
     <div class="flex flex-wrap gap-4 mb-4 text-xs text-stone-500">
@@ -183,36 +160,99 @@
     </div>
 
     <!-- Quran text pane -->
-    <main class="bg-white border border-stone-200 rounded-2xl shadow-sm p-6 md:p-10">
+    <main class="bg-white border border-stone-200 rounded-2xl shadow-sm p-6 md:p-10 mb-32">
       <div id="quran-text" class="quran-text text-right" dir="rtl">
         <span class="text-stone-400 text-base font-ui">Loading…</span>
       </div>
     </main>
 
-    <footer class="mt-8 text-xs text-stone-400 text-center">
+    <footer class="mt-8 text-xs text-stone-400 text-center mb-32">
       Serve this directory with <code class="bg-stone-100 px-1 rounded">python -m http.server</code>
       from the repo root (not <code>file://</code> -- browsers block <code>fetch()</code> of local JSON
       under the file protocol).
     </footer>
   </div>
 
+  <!-- Floating playback dock: fixed to the bottom of the viewport (not the
+       document) so it's always reachable regardless of scroll position --
+       important once a surah's text is long enough to scroll past a single
+       screen (up to ~6100 words for Al-Baqarah). Rounded, pill-like, with a
+       backdrop blur so text scrolling underneath it stays legible. -->
+  <div class="fixed inset-x-0 bottom-4 px-4 z-20 pointer-events-none" dir="ltr">
+    <div id="player-dock"
+      class="pointer-events-auto mx-auto max-w-xl bg-white/90 backdrop-blur-md border border-stone-200
+             rounded-2xl shadow-lg shadow-stone-900/10 px-3 py-2.5 md:px-4 md:py-3
+             flex items-center gap-2 md:gap-3">
+
+      <button id="play-pause-btn" aria-label="Play"
+        class="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full
+               bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800
+               transition-colors shadow-sm">
+        <svg id="play-icon" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="pause-icon" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+      </button>
+
+      <button id="prev-repeat-btn" aria-label="Previous repeat" title="Previous repeat"
+        class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full text-stone-500
+               hover:bg-stone-100 active:bg-stone-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM11 12l9-6v12z" transform="scale(-1,1) translate(-24,0)"/></svg>
+      </button>
+
+      <!-- Custom repeat-aware timeline. Shows colored overlays for each
+           detected repeat's full span (first occurrence -> end of the
+           flagged second occurrence) plus a tick at each site's
+           first-occurrence start -- information the native <audio>
+           scrubber has no way to display. -->
+      <div id="timeline" class="relative flex-1 h-2.5 rounded-full bg-stone-200 cursor-pointer select-none overflow-hidden">
+        <div id="timeline-repeats" class="absolute inset-y-0 left-0 w-full"></div>
+        <div id="timeline-playhead"
+             class="absolute inset-y-0 w-1 rounded-full bg-stone-700 pointer-events-none"
+             style="left: 0%"></div>
+      </div>
+
+      <button id="next-repeat-btn" aria-label="Next repeat" title="Next repeat"
+        class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full text-stone-500
+               hover:bg-stone-100 active:bg-stone-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM11 12l9-6v12z"/></svg>
+      </button>
+
+      <button id="speed-btn"
+        class="flex-shrink-0 text-xs md:text-sm font-medium text-stone-600 hover:bg-stone-100 active:bg-stone-200
+               rounded-full w-11 h-8 transition-colors">
+        1.0x
+      </button>
+    </div>
+    <div class="text-center mt-1.5">
+      <span id="repeat-count" class="text-xs text-stone-400 font-mono bg-white/70 backdrop-blur-sm rounded-full px-2 py-0.5"></span>
+    </div>
+  </div>
+
 <script>
 (() => {
   'use strict';
 
-  // Reciter metadata (id -> display label). `id` is exactly the filename
-  // suffix used below: audio/{surah:03d}_{id}.mp3, srt_output/{surah:03d}_{id}.json.
+  // Reciter metadata (id -> {label, ext}). `id` is exactly the filename
+  // suffix used below: audio/{surah:03d}_{id}.{ext}, srt_output/{surah:03d}_{id}.json.
+  // `ext` varies per reciter's source audio (mp3 for the shorter surahs'
+  // Alafasy/Abdul Basit recordings, opus for Al-Baqarah's much longer
+  // Kaseb/Jabir/Ayoub recordings) -- kept per-reciter rather than assuming
+  // one fixed extension for the whole app, since nothing about the player
+  // itself cares which container format the browser's <audio> element
+  // ultimately decodes.
   const RECITERS = {
-    alafasy: 'Mishary Alafasy',
-    basit: 'Abdul Basit (murattal)',
+    alafasy: { label: 'Mishary Alafasy', ext: 'mp3' },
+    basit: { label: 'Abdul Basit (murattal)', ext: 'mp3' },
+    kaseb: { label: 'Ahmed Kaseb', ext: 'opus' },
+    jabir: { label: 'Abdullah Ali Jabir', ext: 'opus' },
+    ayoub: { label: 'Mohammad Ayoub', ext: 'opus' },
   };
 
   // Surah -> [reciter ids] with generated alignment output for that surah.
   // Kept as an explicit map (rather than probing the filesystem, which
   // browsers can't do) so a missing file fails loudly via the fetch()
-  // below instead of silently omitting an option. Every surah currently
-  // has 'alafasy'; 'basit' is only present for surah 66 so far.
+  // below instead of silently omitting an option.
   const SURAH_RECITERS = {
+    2: ['kaseb', 'jabir', 'ayoub'],
     66: ['alafasy', 'basit'],
     67: ['alafasy'],
     68: ['alafasy'],
@@ -237,6 +277,9 @@
     prevRepeatBtn: document.getElementById('prev-repeat-btn'),
     nextRepeatBtn: document.getElementById('next-repeat-btn'),
     repeatCount: document.getElementById('repeat-count'),
+    playPauseBtn: document.getElementById('play-pause-btn'),
+    playIcon: document.getElementById('play-icon'),
+    pauseIcon: document.getElementById('pause-icon'),
   };
 
   // Seek this many seconds before a repeat site's first-occurrence start
@@ -303,7 +346,7 @@
     for (const id of available) {
       const opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = RECITERS[id] || id;
+      opt.textContent = RECITERS[id]?.label || id;
       els.reciterSelect.appendChild(opt);
     }
     const next = available.includes(previouslySelected) ? previouslySelected : available[0];
@@ -321,12 +364,14 @@
   }
 
   async function loadSurahAndReciter(surahNum, reciterId) {
-    els.status.textContent = `loading surah ${surahNum} (${RECITERS[reciterId] || reciterId})…`;
+    const reciterLabel = RECITERS[reciterId]?.label || reciterId;
+    const reciterExt = RECITERS[reciterId]?.ext || 'mp3';
+    els.status.textContent = `loading surah ${surahNum} (${reciterLabel})…`;
     els.text.innerHTML = '<span class="text-stone-400 text-base font-ui">Loading…</span>';
     currentIdx = -1;
 
     const jsonPath = `../srt_output/${pad3(surahNum)}_${reciterId}.json`;
-    const audioPath = `../audio/${pad3(surahNum)}_${reciterId}.mp3`;
+    const audioPath = `../audio/${pad3(surahNum)}_${reciterId}.${reciterExt}`;
 
     const res = await fetch(jsonPath);
     if (!res.ok) {
@@ -347,28 +392,62 @@
     els.status.textContent = `${words.length} words loaded, ${repeatSites.length} repeat site(s) — ${jsonPath}`;
   }
 
+  /** Shared run-detection pass over `words`, used by both groupRepeatSites
+   * and buildDisplayMapping so the "collapse a contiguous is_repeat=true
+   * run, pair it with the equal-length preceding run of is_repeat=false
+   * cues" logic exists in exactly one place. For every index `i` into
+   * `ws`, `firstOccurrenceCueIdx[i]` is:
+   *   - `i` itself, if `ws[i]` is not a repeat cue.
+   *   - the index of the corresponding word in the preceding equal-length
+   *     non-repeat run, if `ws[i]` is a repeat cue and that preceding run
+   *     exists (this is exactly the first occurrence, by construction of
+   *     the splice step in repeats.py's detect_and_fix_repeats: each
+   *     accepted fix appends "primary copy" cues immediately followed by
+   *     "repeat copy" cues, same word count on both sides, cues stay in
+   *     start-time sorted order).
+   *   - `-1`, if `ws[i]` is a repeat cue with no preceding run to pair
+   *     with (defensive only; should not happen against this pipeline's
+   *     real output) -- callers apply their own fallback for this case. */
+  function computeFirstOccurrenceCueIdx(ws) {
+    const firstOccurrenceCueIdx = new Array(ws.length);
+    let i = 0;
+    while (i < ws.length) {
+      if (!ws[i].is_repeat) {
+        firstOccurrenceCueIdx[i] = i;
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < ws.length && ws[j].is_repeat) j++;
+      const runLen = j - i;
+      const firstRunStartIdx = i - runLen;
+      for (let k = 0; k < runLen; k++) {
+        const cueIdx = i + k;
+        firstOccurrenceCueIdx[cueIdx] = firstRunStartIdx >= 0 ? firstRunStartIdx + k : -1;
+      }
+      i = j;
+    }
+    return firstOccurrenceCueIdx;
+  }
+
   /** Collapse contiguous runs of `is_repeat=true` word-cues into one "site"
-   * per run, and pair each run with the equal-length run of
-   * is_repeat=false cues immediately preceding it -- that preceding run
-   * is exactly the first occurrence, by construction of the splice step in
-   * repeats.py's detect_and_fix_repeats (each accepted fix appends
-   * "primary copy" cues immediately followed by "repeat copy" cues, same
-   * word count on both sides, and cues stay in start-time sorted order).
-   * Falls back to just the flagged run's own span if -- for any reason --
-   * fewer non-repeat words precede it than the run's length (defensive
-   * only; should not happen against this pipeline's real output). */
+   * per run, using `computeFirstOccurrenceCueIdx` to locate each run's
+   * paired first-occurrence run. Falls back to just the flagged run's own
+   * span if -- for any reason -- there's no preceding run to pair with
+   * (defensive only; should not happen against this pipeline's real
+   * output). */
   function groupRepeatSites(ws) {
+    const firstOccurrenceCueIdx = computeFirstOccurrenceCueIdx(ws);
     const sites = [];
     let i = 0;
     while (i < ws.length) {
       if (!ws[i].is_repeat) { i++; continue; }
       let j = i;
       while (j < ws.length && ws[j].is_repeat) j++;
-      const runLen = j - i;
-      const firstRunStartIdx = i - runLen;
+      const firstOccIdx = firstOccurrenceCueIdx[i];
       let firstStart, firstEnd;
-      if (firstRunStartIdx >= 0) {
-        firstStart = ws[firstRunStartIdx].start;
+      if (firstOccIdx >= 0) {
+        firstStart = ws[firstOccIdx].start;
         firstEnd = ws[i - 1].end;
       } else {
         firstStart = ws[i].start;
@@ -386,60 +465,60 @@
   }
 
   /** Build the "one span per real word" display mapping described at
-   * `displayWords`'s declaration. Every is_repeat=false cue gets its own
-   * new display slot, in order. Every is_repeat=true cue is mapped back
-   * onto the display slot of the corresponding word in the equal-length
-   * run of is_repeat=false cues immediately preceding it (the FIRST
-   * occurrence) -- same pairing logic as groupRepeatSites, just producing
-   * a per-cue index map instead of per-site spans. This is what lets
-   * onTimeUpdate highlight the SAME on-screen word again when playback
-   * reaches a repeat's second occurrence, instead of a duplicate word
-   * needing to exist in the DOM. */
+   * `displayWords`'s declaration, using `computeFirstOccurrenceCueIdx` to
+   * locate each repeat cue's paired first-occurrence cue. Every
+   * is_repeat=false cue gets its own new display slot, in order. Every
+   * is_repeat=true cue is mapped back onto the display slot already
+   * created for its first-occurrence cue -- this is what lets onTimeUpdate
+   * highlight the SAME on-screen word again when playback reaches a
+   * repeat's second occurrence, instead of a duplicate word needing to
+   * exist in the DOM. */
   function buildDisplayMapping(ws) {
+    const firstOccurrenceCueIdx = computeFirstOccurrenceCueIdx(ws);
     const dWords = [];
     const mapping = new Array(ws.length);
-    let i = 0;
-    while (i < ws.length) {
-      if (!ws[i].is_repeat) {
+    for (let i = 0; i < ws.length; i++) {
+      const firstOccIdx = firstOccurrenceCueIdx[i];
+      if (firstOccIdx === i) {
+        // Not a repeat cue (or the defensive fallback below already ran
+        // for this index) -- new display slot.
         mapping[i] = dWords.length;
         dWords.push({ word: ws[i].word, aya: ws[i].aya });
-        i++;
-        continue;
+      } else if (firstOccIdx >= 0 && mapping[firstOccIdx] !== undefined) {
+        // Map onto the display slot already created for the
+        // corresponding first-occurrence word.
+        mapping[i] = mapping[firstOccIdx];
+      } else {
+        // Defensive fallback (should not happen against this pipeline's
+        // real output -- see computeFirstOccurrenceCueIdx's comment): no
+        // preceding run to pair with, so this repeat cue gets its own
+        // display slot rather than crashing.
+        mapping[i] = dWords.length;
+        dWords.push({ word: ws[i].word, aya: ws[i].aya });
       }
-      let j = i;
-      while (j < ws.length && ws[j].is_repeat) j++;
-      const runLen = j - i;
-      const firstRunStartIdx = i - runLen;
-      for (let k = 0; k < runLen; k++) {
-        const cueIdx = i + k;
-        if (firstRunStartIdx >= 0) {
-          // Map onto the display slot already created for the
-          // corresponding first-occurrence word.
-          mapping[cueIdx] = mapping[firstRunStartIdx + k];
-        } else {
-          // Defensive fallback (should not happen against this pipeline's
-          // real output -- see groupRepeatSites' matching comment): no
-          // preceding run to pair with, so this repeat cue gets its own
-          // display slot rather than crashing.
-          mapping[cueIdx] = dWords.length;
-          dWords.push({ word: ws[cueIdx].word, aya: ws[cueIdx].aya });
-        }
-      }
-      i = j;
     }
     return { displayWords: dWords, cueToDisplayIdx: mapping };
+  }
+
+  /** Denominator for the timeline's 0-100% mapping: `totalDuration` (real
+   * audio.duration, once known via loadedmetadata) if available, else the
+   * last word's end time as an estimate, else 1 (avoids division by zero
+   * before any data has loaded). Shared by renderTimeline,
+   * updateTimelinePlayhead, and seekFromTimelineClick so all three treat
+   * "duration unknown yet" the same way. */
+  function timelineDenom() {
+    return totalDuration || (words.length ? words[words.length - 1].end : 0) || 1;
   }
 
   function renderTimeline() {
     els.timelineRepeats.innerHTML = '';
     if (!repeatSites.length) return;
-    const totalWordsEnd = words.length ? words[words.length - 1].end : 0;
     // Use the last word's end as the timeline's 0-100% denominator until
     // audio.duration is known (loadedmetadata may fire after this render);
     // updateTimelinePlayhead below re-derives percentages the same way on
     // every tick, so this only affects the repeat-range overlay's initial
     // paint, not correctness of the playhead.
-    const denom = totalDuration || totalWordsEnd || 1;
+    const denom = timelineDenom();
 
     for (const site of repeatSites) {
       const startPct = (site.firstStart / denom) * 100;
@@ -459,7 +538,7 @@
   }
 
   function updateTimelinePlayhead() {
-    const denom = totalDuration || (words.length ? words[words.length - 1].end : 0) || 1;
+    const denom = timelineDenom();
     const pct = Math.min(100, Math.max(0, (els.audio.currentTime / denom) * 100));
     els.timelinePlayhead.style.left = `${pct}%`;
   }
@@ -468,8 +547,7 @@
     if (!words.length) return;
     const rect = els.timeline.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
-    const denom = totalDuration || words[words.length - 1].end || 1;
-    els.audio.currentTime = frac * denom;
+    els.audio.currentTime = frac * timelineDenom();
   }
 
   function updateRepeatButtons() {
@@ -528,7 +606,7 @@
     const target = repeatSites[targetIdx];
     programmaticRepeatSeek = true;
     els.audio.currentTime = Math.max(0, target.firstStart - REPEAT_JUMP_LEAD_SEC);
-    els.audio.play();
+    els.audio.play().catch(() => {});
   }
 
   /** Invalidate `currentRepeatSiteIdx` on any seek NOT caused by
@@ -597,7 +675,7 @@
         : '';
       span.addEventListener('click', () => {
         els.audio.currentTime = displaySlotFirstCueStart[d] ?? 0;
-        els.audio.play();
+        els.audio.play().catch(() => {});
       });
 
       ayaWrap.appendChild(span);
@@ -664,6 +742,29 @@
     speedIdx = (speedIdx + 1) % SPEEDS.length;
     els.audio.playbackRate = SPEEDS[speedIdx];
     els.speedBtn.textContent = `${SPEEDS[speedIdx].toFixed(2).replace(/0$/, '')}x`;
+  });
+
+  els.playPauseBtn.addEventListener('click', () => {
+    if (els.audio.paused) els.audio.play().catch(() => {});
+    else els.audio.pause();
+  });
+
+  // Sync the dock's play/pause icon with the <audio> element's ACTUAL
+  // play state via its own 'play'/'pause' events, rather than toggling the
+  // icon directly inside the click handler above -- that way every path
+  // that starts/stops playback (this button, jumpToRepeat's el.play() call,
+  // a word click's el.play() call, or the audio finishing/erroring) keeps
+  // the icon correct with a single source of truth instead of needing each
+  // call site to remember to flip it too.
+  els.audio.addEventListener('play', () => {
+    els.playIcon.classList.add('hidden');
+    els.pauseIcon.classList.remove('hidden');
+    els.playPauseBtn.setAttribute('aria-label', 'Pause');
+  });
+  els.audio.addEventListener('pause', () => {
+    els.pauseIcon.classList.add('hidden');
+    els.playIcon.classList.remove('hidden');
+    els.playPauseBtn.setAttribute('aria-label', 'Play');
   });
 
   els.select.addEventListener('change', () => loadSurah(Number(els.select.value)));

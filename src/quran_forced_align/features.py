@@ -34,8 +34,27 @@ def compute_fbank_features(samples, tail_silence_sec=0.3):
     opts.mel_opts.num_bins = 80  # NOT the knf default of 23
     opts.use_energy = False
     fb = knf.OnlineFbank(opts)
-    fb.accept_waveform(SAMPLE_RATE, padded.tolist())
+    # Passing the numpy array directly (instead of padded.tolist()) skips
+    # boxing every sample into a Python float + building a Python list --
+    # for a huge surah (Al-Baqarah: ~112M samples) that boxing pass alone
+    # allocates multiple GB of Python-object overhead and dominates this
+    # function's cost. accept_waveform's C++ binding accepts anything
+    # satisfying the buffer/sequence protocol, and a numpy float32 array
+    # converts through the identical per-sample float32 values as
+    # `.tolist()` would have produced -- verified empirically to be
+    # byte-identical to passing padded.tolist() (see
+    # tests/test_features_array_input_equivalence.py) since this is a
+    # transport-mechanism change only, not a numeric one.
+    fb.accept_waveform(SAMPLE_RATE, padded)
     fb.input_finished()
     n_frames = fb.num_frames_ready
-    feats = np.stack([fb.get_frame(i) for i in range(n_frames)]).astype(np.float32)
+    # Preallocate + assign-in-place instead of building a Python list of
+    # per-frame arrays and letting np.stack allocate+copy a second time --
+    # avoids one full transient copy of the whole feature matrix (for
+    # Al-Baqarah, ~702,000 frames x 80 dims, that transient alone is
+    # ~224MB). get_frame() already returns float32 (confirmed empirically),
+    # so no dtype cast is needed on assignment.
+    feats = np.empty((n_frames, opts.mel_opts.num_bins), dtype=np.float32)
+    for i in range(n_frames):
+        feats[i] = fb.get_frame(i)
     return feats

@@ -58,6 +58,64 @@ pinned single-threaded for determinism, so real CPU-core parallelism comes
 from separate processes, not GIL-contending threads). One surah failing
 does not abort the batch; a summary table is printed at the end.
 
+## Web player
+
+`web-player/index.html` is a standalone (no build step) HTML/JS/Tailwind
+page that plays a surah's audio with live word-level highlighting, driven
+directly by `srt_output/*.json` + `audio/*` -- see that file's own comments
+for the highlighting/repeat-detection/timeline UI logic.
+
+Serve the repo root with **`web-player/serve.py`**, not plain
+`python -m http.server`:
+
+```bash
+python3 web-player/serve.py 8000   # then open http://localhost:8000/web-player/
+```
+
+`python -m http.server` does not support HTTP Range requests (no
+`Accept-Ranges` header, always `200` never `206`) -- Chrome's `<audio>`
+element reports `seekable.length === 0` for any file served that way, so
+clicking a word or the timeline silently fails to actually seek even
+though the file loads and plays from the start. `serve.py` is a small
+Range-supporting drop-in replacement for local development; any real web
+server (nginx, Caddy, GitHub Pages, a CDN, etc.) already supports Range
+requests correctly, so this only matters when serving locally.
+
+## Performance
+
+The whole-surah CTC Viterbi forced-alignment DP (`viterbi.py`) picks
+between two internally-identical implementations based on problem size:
+a direct (T,M) array for anything under `_DIRECT_PATH_MAX_CELLS`, and an
+exact checkpointed (Hirschberg-style) backtrace for anything larger, which
+only ever holds O(sqrt(T)*M) of the trellis in memory instead of the full
+O(T*M). This matters for Al-Baqarah (surah 2, ~6122 words, up to
+~215,000 audio frames): the naive full-array approach would need ~69GB of
+RAM just for the `alpha` array alone -- infeasible on ordinary hardware.
+The checkpointed path handles the same problem in well under 1GB, at the
+cost of roughly 2x the forward-pass FLOPs (re-deriving each chunk's rows
+once during the initial pass, once more during backtrace reconstruction).
+Both paths are verified byte-identical to each other (and to the original
+un-optimized reference implementation) across a battery of sizes including
+every internal chunk-boundary edge case -- see `viterbi.py`'s own
+docstring and the equivalence checks referenced there.
+
+Also optimized (all verified byte-identical to the pre-optimization
+baseline on surahs 66-72, confirmed via SHA-256 hash comparison):
+eliminating the `backptr` array (recomputed on the fly during backtrace via
+deterministic-argmax replay, since arithmetic here is pinned single-threaded
+float64), removing per-audio-frame array allocations in the Viterbi forward
+step (`_step_alpha`'s in-place scratch buffers), passing the numpy sample
+array directly into `kaldi_native_fbank` instead of boxing every sample via
+`.tolist()`, preallocating feature/log-prob arrays instead of
+list-then-stack/concatenate, and piping ffmpeg's decoded PCM straight from
+its stdout instead of a temp-file round-trip.
+
+Net effect on a representative surah (66, 269 words): ~79s -> ~52s
+end-to-end (~34% faster). Net effect on Al-Baqarah: went from impossible
+(OOM/swap-thrash on a 7.6GB-RAM machine) to completing in a few minutes with
+comfortable memory headroom -- see the Al-Baqarah row in the verification
+table below.
+
 ## Verification status
 
 Batch-run and manually spot-checked against real Alafasy recitation audio
@@ -88,6 +146,27 @@ synthetic ground-truth fixtures (`test_B`/`test_C`) and the confirmed-zero
 surahs above -- a genuine no-pause repeat that never trips the initial
 duration-anomaly gate would still be silently missed. Treat 0-flag surahs
 as "no repeat detected," not "confirmed no repeat."
+
+### Large-scale run: Al-Baqarah (surah 2, 3 reciters)
+
+The single largest surah in the Quran (286 ayahs, 6122 words) was run
+end-to-end against 3 different full-surah recordings, exercising the
+checkpointed-Viterbi path described above at real scale (not just synthetic
+benchmarks):
+
+| reciter | audio length | words | repeats flagged | monotonic violations |
+|---------|-------------|-------|------------------|-----------------------|
+| Ahmed Kaseb | ~117.6 min | 6142 (6122 unique) | 9 sites (20 word-cues) | 0 |
+| Abdullah Ali Jabir | ~130.6 min | 6173 (6122 unique) | ~26 sites (51 word-cues) | 0 |
+| Mohammad Ayoub | ~143.7 min | 6337 (6122 unique) | ~57 sites (215 word-cues) | 0 |
+
+All 3 completed without exhausting memory on a 7.6GB-RAM machine (the
+un-optimized pipeline could not even start the Viterbi pass at this size --
+see "Performance" above). Output sanity-checked (monotonic non-overlapping
+timestamps, last word's end time matching the source audio's real
+duration) but NOT yet manually spot-checked by ear the way surahs 66-72
+were -- treat the `is_repeat` flags for surah 2 as unverified until that
+pass is done, same caveat as the 0-flag surahs above.
 
 ## Model license
 

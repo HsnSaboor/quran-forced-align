@@ -39,9 +39,6 @@ def _zero_state_for_inputs(sess_inputs):
             continue
         if inp.name == "processed_lens":
             state[inp.name] = np.zeros((1,), dtype=np.int64)
-        elif inp.name == "embed_states":
-            dims = [1 if d == "N" else d for d in inp.shape]
-            state[inp.name] = np.zeros(tuple(dims), dtype=np.float32)
         else:
             dims = [1 if d == "N" else d for d in inp.shape]
             state[inp.name] = np.zeros(tuple(dims), dtype=np.float32)
@@ -76,6 +73,18 @@ def run_streaming_log_probs(sess, feats):
 
     inputs = sess.get_inputs()
     out_names = [o.name for o in sess.get_outputs()]
+    # Precompute the static input-name <-> output-index correspondence once
+    # (instead of rebuilding a "new_" + name string and a fresh
+    # dict(zip(...)) every chunk -- for a huge surah this loop runs ~14,600
+    # times, so ~97 string concats + dict builds per call adds up to over a
+    # million redundant small allocations across the whole file). Every
+    # cache tensor's output name is deterministically "new_" + its input
+    # name and the set of names never changes between chunks, so this
+    # mapping is computed exactly once, outside the loop, with no change to
+    # which values end up feeding into which input on any given call.
+    log_probs_out_idx = out_names.index("log_probs")
+    state_names = [inp.name for inp in inputs if inp.name != "x"]
+    state_out_idx = [out_names.index("new_" + name) for name in state_names]
 
     T_raw, feat_dim = feats.shape
     if T_raw <= segment:
@@ -89,21 +98,48 @@ def run_streaming_log_probs(sess, feats):
             [feats, np.zeros((pad_needed, feat_dim), dtype=np.float32)], axis=0
         )
 
-    state = _zero_state_for_inputs(inputs)
-    all_log_probs = []
+    # `feed` is reused across every chunk (same fixed set of keys every
+    # call: "x" plus every cache-tensor input name) -- only the VALUES
+    # change per iteration, so there's no need to allocate a fresh dict via
+    # feed.update(state) each time.
+    feed = {"x": None}
+    feed.update(_zero_state_for_inputs(inputs))
+
+    log_probs = None  # preallocated once the first chunk reveals frames_per_chunk
     ptr = 0
-    for _ in range(n_chunks):
-        chunk = feats[ptr:ptr + segment][None, :, :].astype(np.float32)
-        feed = {"x": chunk}
-        feed.update(state)
+    for chunk_idx in range(n_chunks):
+        # copy=False: the slice is already float32 (feats is always
+        # float32 by construction -- see compute_fbank_features/the
+        # padding above), so this only forces a copy when one is actually
+        # needed to materialize the [None, :, :] view as contiguous input
+        # for onnxruntime, never as an unconditional dtype-cast copy.
+        chunk = feats[ptr:ptr + segment][None, :, :].astype(np.float32, copy=False)
+        feed["x"] = chunk
         out = sess.run(None, feed)
-        d = dict(zip(out_names, out))
-        all_log_probs.append(d["log_probs"][0])
-        state = {inp.name: d["new_" + inp.name] for inp in inputs if inp.name != "x"}
+
+        chunk_log_probs = out[log_probs_out_idx][0]
+        if log_probs is None:
+            frames_per_chunk = chunk_log_probs.shape[0]
+            log_probs = np.empty((n_chunks * frames_per_chunk, chunk_log_probs.shape[1]),
+                                  dtype=np.float32)
+        # Defensive check: the preallocation above and the row_start/
+        # frames_per_chunk indexing below both assume every chunk emits
+        # EXACTLY frames_per_chunk (fixed, from chunk 0) output frames. If
+        # the model ever violates that invariant (e.g. a different chunk
+        # emits a different number of frames), fail loudly here instead of
+        # silently misaligning or truncating output rows.
+        assert chunk_log_probs.shape[0] == frames_per_chunk, (
+            f"chunk {chunk_idx} emitted {chunk_log_probs.shape[0]} frames, "
+            f"expected fixed frames_per_chunk={frames_per_chunk} (from chunk 0)"
+        )
+        row_start = chunk_idx * frames_per_chunk
+        log_probs[row_start:row_start + frames_per_chunk] = chunk_log_probs
+
+        for name, out_idx in zip(state_names, state_out_idx):
+            feed[name] = out[out_idx]
         ptr += offset
 
-    log_probs = np.concatenate(all_log_probs, axis=0).astype(np.float64)
-    frames_per_chunk = all_log_probs[0].shape[0]
+    log_probs = log_probs.astype(np.float64)
     subsample_factor = offset / frames_per_chunk  # empirically 48/12 = 4
     seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
     return log_probs, seconds_per_output_frame
