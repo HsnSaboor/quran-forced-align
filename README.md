@@ -177,6 +177,17 @@ pass is done, same caveat as the 0-flag surahs above.
 A standard (non-hifz-practice) murattal recitation -- 0 repeats flagged is
 expected here, not a detector gap.
 
+### Surah 7 (Al-A'raf), Hammad Sinan (murattal)
+
+| reciter | audio length | words | repeats flagged | monotonic violations |
+|---------|-------------|-------|------------------|-----------------------|
+| Hammad Sinan | ~66.3 min | 3377 (3325 unique) | 19 sites (52 word-cues) | 0 |
+
+Labeled "murattal" but unlike surah 35's run above, this one DID get
+repeats flagged -- not yet manually spot-checked by ear, so treat these
+flags as unverified (same caveat as surah 2's reciters above) rather than
+assuming either "murattal never repeats" or "the flags are all genuine."
+
 ## Model license
 
 The bundled acoustic model (`Muno459/zipformer_p-arabic-v2`) carries a
