@@ -40,6 +40,51 @@ Writes `srt_output/001.srt` and `srt_output/001.json`. Tuning flags
 `--max-repeat-window-words`, `--tail-silence-sec`) control the
 repeat-detection sensitivity -- see `quran-forced-align --help`.
 
+### Output format
+
+The JSON output is a list of per-word records, sorted by start time:
+
+```json
+{
+  "word": "أَعُوذُ", "start": 0.0, "end": 0.15, "sura": 1, "aya": 0,
+  "is_repeat": false, "avg_logprob": -14.26, "min_decision_margin": 6.98, "low_confidence": false,
+  "letters": [
+    {"char": "أ", "deleted": false, "tajweed_rules": [], "boundary_tajweed_rules": [],
+     "start": 0.0, "end": 0.0, "phonemes": [{"phoneme": "ءَ", "start": 0.0, "end": 0.0}]},
+    "... one entry per Uthmani character of the word ..."
+  ]
+}
+```
+
+- `word`/`start`/`end`/`sura`/`aya`/`is_repeat` are the same flat fields
+  this package has always emitted (the web player reads only these, so
+  older `srt_output/*.json` files and this format are mutually readable).
+- `avg_logprob`/`min_decision_margin`/`low_confidence`: per-word
+  alignment-confidence signals, computed as free post-processing over data
+  the Viterbi pass already produces -- no extra ONNX inference, no extra
+  DP pass, no multi-beam re-alignment. `avg_logprob` is `null` and
+  `min_decision_margin` can be `null` for a degenerate/unambiguous span
+  (both are `+inf`/`-inf` internally, sanitized to `null` at JSON-write
+  time since strict JSON has no infinity literal). See `confidence.py`'s
+  module docstring.
+- `letters`: one entry per Uthmani character of the word, each with the
+  madd/qalqalah tajweed rule(s) `quran_transcript` tags that character
+  with (`tajweed_rules`), whether it's silently dropped (`deleted`, e.g.
+  hamzat al-wasl), any additional tajweed rule that only applies under
+  continuous non-pausing recitation across an ayah boundary
+  (`boundary_tajweed_rules` -- populated only at the first/last letter of
+  an ayah-boundary word), and its own phoneme-level timing
+  (`start`/`end`/`phonemes`). A `deleted` letter or a diacritic-only
+  letter (haraka/tanween/shadda -- its timing is inherently its base
+  letter's timing, since this model's phoneme tokens are pre-composed
+  base+diacritic clusters) gets `start`/`end` = `null` and an empty
+  `phonemes` list.
+- Ghunnah/idgham/ikhfaa are NOT currently tag-observable this way: the
+  underlying `quran_transcript` package applies them to the phoneme TEXT
+  (so the model still hears/aligns the correct merged sound) but does not
+  attach a `tajweed_rules` tag for them the way it does for madd/
+  qalqalah -- only madd and qalqalah rules are populated today.
+
 ## Usage: batch (multiple surahs, parallel processes)
 
 ```bash
@@ -164,9 +209,9 @@ All 3 completed without exhausting memory on a 7.6GB-RAM machine (the
 un-optimized pipeline could not even start the Viterbi pass at this size --
 see "Performance" above). Output sanity-checked (monotonic non-overlapping
 timestamps, last word's end time matching the source audio's real
-duration) but NOT yet manually spot-checked by ear the way surahs 66-72
-were -- treat the `is_repeat` flags for surah 2 as unverified until that
-pass is done, same caveat as the 0-flag surahs above.
+duration) and every flagged site across all 3 reciters (9 + ~26 + ~57 = 92
+sites total) has since been manually spot-checked by ear -- all confirmed
+genuine, 0 false positives found.
 
 ### Surah 35 (Fatir), Abdullah Mohsin Al-Kasim (murattal)
 
@@ -184,9 +229,10 @@ expected here, not a detector gap.
 | Hammad Sinan | ~66.3 min | 3377 (3325 unique) | 19 sites (52 word-cues) | 0 |
 
 Labeled "murattal" but unlike surah 35's run above, this one DID get
-repeats flagged -- not yet manually spot-checked by ear, so treat these
-flags as unverified (same caveat as surah 2's reciters above) rather than
-assuming either "murattal never repeats" or "the flags are all genuine."
+repeats flagged -- all 19 sites have since been manually spot-checked by
+ear and confirmed genuine, 0 false positives found. So "murattal" is not
+a reliable predictor of whether repeats occur; the detector's flags held
+up regardless.
 
 ## Model license
 

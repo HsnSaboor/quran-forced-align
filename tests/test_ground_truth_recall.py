@@ -71,7 +71,17 @@ def _build_manual_reference(ref_words, tok2id, max_token_len, sura=2, aya=255):
     """Build (combined_token_ids, word_slots) in the exact shape
     reference.build_combined_reference() produces, for an arbitrary list of
     already-known per-word phoneme strings (no ayah-boundary/istiaatha
-    logic needed -- these are isolated test clips, not full surahs)."""
+    logic needed -- these are isolated test clips, not full surahs).
+
+    `token_char_idx`/`letters` are populated with degenerate placeholder
+    values (each token attributed to its own 1:1 "char", no real tajweed
+    data) rather than left out: this test builds its word_slots by hand
+    from raw phoneme strings with no underlying Uthmani text to derive
+    real per-character tajweed/silent-letter data from, but
+    extract_word_frame_spans (the real code under test here) requires both
+    keys to be present on every slot -- see reference.build_combined_reference
+    for what a real caller populates them with.
+    """
     combined_token_ids = []
     word_slots = []
     for word_phonemes in ref_words:
@@ -84,6 +94,9 @@ def _build_manual_reference(ref_words, tok2id, max_token_len, sura=2, aya=255):
             "aya": aya,
             "is_ayah_final": False,  # isolated clip, not a full ayah -- no waqf-lengthening exception applies
             "token_positions": positions,
+            "token_char_idx": list(range(len(ids))),
+            "letters": [{"char": tid, "deleted": False, "tajweed_rules": [], "boundary_tajweed_rules": []}
+                        for tid in range(len(ids))],
         })
         combined_token_ids.extend(ids)
     return combined_token_ids, word_slots
@@ -100,7 +113,7 @@ def _run_one(audio_path, ref_words, tok2id, max_token_len,
     sess = make_onnx_session(MODEL_PATH)
     log_probs, seconds_per_frame = run_streaming_log_probs(sess, feats)
 
-    ext, path = ctc_forced_align(log_probs, combined_token_ids, blank_id=tok2id["<blank>"])
+    ext, path, _margins = ctc_forced_align(log_probs, combined_token_ids, blank_id=tok2id["<blank>"])
     assert ext is not None, "forced alignment failed (audio too short for reference)"
 
     first_seen, last_seen = frame_spans_from_path(path, len(ext))

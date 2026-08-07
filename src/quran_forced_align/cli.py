@@ -7,7 +7,7 @@ import os
 
 from .constants import DEFAULT_MAX_REPEAT_WINDOW_WORDS
 from .pipeline import align_surah
-from .srt import emit_json, emit_srt
+from .srt import emit_json_rich, emit_srt
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,7 +50,7 @@ def add_tuning_args(ap: argparse.ArgumentParser) -> None:
 def main():
     args = build_parser().parse_args()
 
-    cue_tuples = align_surah(
+    records = align_surah(
         args.surah, args.audio,
         model_path=args.model,
         tokens_path=args.tokens,
@@ -63,9 +63,9 @@ def main():
     )
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    emit_srt(cue_tuples, args.out)
+    emit_srt(records, args.out)
     json_out = os.path.splitext(args.out)[0] + ".json"
-    emit_json(cue_tuples, json_out)
+    emit_json_rich(records, json_out)
 
 
 if __name__ == "__main__":

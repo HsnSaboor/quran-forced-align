@@ -73,12 +73,15 @@ def ctc_forced_align(log_probs, ref_ids, blank_id):
                                                  # into one repeat)
                    + log_probs[t, ext[s]]
 
-    Returns (ext, path) where path[t] is the best state at frame t (so the
-    caller can recover, for every reference token, the first/last frame at
-    which its state was occupied). Returns (None, None) if there are fewer
-    frames than the minimum required (T < number of extended states needed
-    to reach the end), meaning this reference can't possibly fit in this
-    audio span.
+    Returns (ext, path, margins) where path[t] is the best state at frame t
+    (so the caller can recover, for every reference token, the first/last
+    frame at which its state was occupied) and margins[t] is the backtrace
+    decision margin at frame t (best-minus-second-best of the 3 candidate
+    predecessor scores that decided path[t-1] -- see `_backtrack_step`;
+    margins[0] is always +inf since there is no backtrace step INTO frame
+    0). Returns (None, None, None) if there are fewer frames than the
+    minimum required (T < number of extended states needed to reach the
+    end), meaning this reference can't possibly fit in this audio span.
 
     Dispatches internally between two byte-identical implementations
     depending on problem size -- see this module's docstring.
@@ -88,7 +91,7 @@ def ctc_forced_align(log_probs, ref_ids, blank_id):
     M = 2 * L + 1
 
     if T < 1 or M < 1:
-        return None, None
+        return None, None, None
 
     ext = _build_ext(ref_ids, blank_id)
 
@@ -165,7 +168,6 @@ def _step_alpha(alpha_prev, lp, ext, skip_valid_states, out, adv1_scratch, skip2
     pipeline.py's DETERMINISM section is careful about, elementwise max
     always picks the literal largest value regardless of comparison order).
     """
-    M = len(ext)
     # adv1_scratch[s] = alpha_prev[s-1] for s>=1, else -inf (no state -1).
     adv1_scratch[0] = -np.inf
     adv1_scratch[1:] = alpha_prev[:-1]
@@ -200,18 +202,33 @@ def _backtrack_step(alpha_prev, s, skip_valid_set):
     for the historical baseline this module verified byte-identical output
     against.
 
-    Returns the predecessor state, i.e. s, s-1, or s-2.
+    Returns (predecessor_state, margin) where predecessor_state is s, s-1,
+    or s-2, and `margin` is best_prev minus the second-best of the 3
+    candidate values (+inf if only one candidate was finite -- there was no
+    real alternative to disagree with). This margin is a genuinely free
+    by-product of the backtrace: the 3 scalars were already being computed
+    and compared to find the argmax; returning their spread as well adds no
+    new pass, no new array, and no change to the chosen path. It answers
+    the same qualitative question an ensemble of narrower beam-search
+    widths would ("would a slightly different search have gone somewhere
+    else here"), analytically rather than by materializing a second
+    search -- see confidence.per_word_min_margin for how this is
+    aggregated into a per-word low-confidence signal.
     """
     stay_val = alpha_prev[s]
     adv_val = alpha_prev[s - 1] if s >= 1 else -np.inf
     skip_val = alpha_prev[s - 2] if s >= 2 and s in skip_valid_set else -np.inf
 
-    best_prev = max(stay_val, adv_val, skip_val)
+    vals = sorted((stay_val, adv_val, skip_val), reverse=True)
+    best_prev = vals[0]
+    second_best = vals[1]
+    margin = np.inf if not np.isfinite(second_best) else best_prev - second_best
+
     if stay_val == best_prev:
-        return s
+        return s, margin
     if adv_val == best_prev:
-        return s - 1
-    return s - 2
+        return s - 1, margin
+    return s - 2, margin
 
 
 def _forced_align_direct(log_probs, ext):
@@ -239,16 +256,18 @@ def _forced_align_direct(log_probs, ext):
 
     end_state = _pick_end_state(alpha[T - 1], M)
     if end_state is None:
-        return None, None
+        return None, None, None
 
     path = np.zeros(T, dtype=np.int64)
+    margins = np.full(T, np.inf, dtype=np.float64)
     s = end_state
     path[T - 1] = s
     for t in range(T - 1, 0, -1):
-        s = _backtrack_step(alpha[t - 1], s, skip_valid_set)
+        s, margin = _backtrack_step(alpha[t - 1], s, skip_valid_set)
         path[t - 1] = s
+        margins[t] = margin
 
-    return ext, path
+    return ext, path, margins
 
 
 def _pick_end_state(alpha_last, M):
@@ -339,7 +358,7 @@ def _forced_align_checkpointed(log_probs, ext):
 
     end_state = _pick_end_state(row_prev, M)  # row_prev now holds alpha[T-1]
     if end_state is None:
-        return None, None
+        return None, None, None
 
     # Pass 2: backtrace interval-by-interval, latest to earliest. For each
     # interval (checkpoint_ts[k-1], checkpoint_ts[k]], reconstruct that
@@ -348,6 +367,7 @@ def _forced_align_checkpointed(log_probs, ext):
     # them, then discard the reconstruction and move to the previous
     # interval.
     path = np.zeros(T, dtype=np.int64)
+    margins = np.full(T, np.inf, dtype=np.float64)
     s = end_state
     path[T - 1] = s
 
@@ -372,13 +392,14 @@ def _forced_align_checkpointed(log_probs, ext):
         # needing local_rows[t - t_start - 1] as alpha[t-1].
         for t in range(t_end, t_start, -1):
             alpha_prev_local = local_rows[t - t_start - 1]
-            s = _backtrack_step(alpha_prev_local, s, skip_valid_set)
+            s, margin = _backtrack_step(alpha_prev_local, s, skip_valid_set)
             path[t - 1] = s
+            margins[t] = margin
         # path[t_start] is now set (from the loop's last iteration writing
         # path[t-1] at t=t_start+1); s already reflects that value for the
         # next (earlier) interval to continue from.
 
-    return ext, path
+    return ext, path, margins
 
 
 def frame_spans_from_path(path, num_states):

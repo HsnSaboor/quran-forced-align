@@ -13,33 +13,69 @@ from .constants import (
     GAP_ARTIFACT_MAX_FRAMES,
     GAP_ARTIFACT_MIN_MARGIN,
 )
+from .confidence import per_word_min_margin
 from .decode import greedy_ctc_decode_ids, token_id_levenshtein_ratio
 from .viterbi import avg_logprob_along_path, ctc_forced_align, frame_spans_from_path
+
+
+def token_frame_spans(token_positions, first_seen, last_seen):
+    """For a list of token positions (indices into a combined token-id
+    list), return (per_token_spans, word_start, word_end) where
+    per_token_spans[i] = (start_frame, end_frame) for token_positions[i]
+    and word_start/word_end are the min/max over all of them. Token
+    position p (an index into the combined token-id list) lives at
+    extended-trellis label-state 2*p+1.
+
+    Returns None if any token never got a state in the trellis (start<0),
+    the same failure signal both `extract_word_frame_spans` and
+    `_repeat_window_candidate` already relied on before this was factored
+    out -- shared here so the phoneme-tier span data (per_token_spans) is
+    computed identically, once, wherever a word's frame span is derived
+    from token-level trellis states, instead of two near-duplicate min/max
+    loops that could drift apart under future edits.
+    """
+    per_token_spans = []
+    for p in token_positions:
+        s = 2 * p + 1
+        start, end = first_seen[s], last_seen[s]
+        if start < 0 or end < 0:
+            return None
+        per_token_spans.append((int(start), int(end)))
+    if not per_token_spans:
+        return None
+    word_start = min(s for s, _ in per_token_spans)
+    word_end = max(e for _, e in per_token_spans)
+    return per_token_spans, word_start, word_end
 
 
 def extract_word_frame_spans(word_slots, first_seen, last_seen):
     """For each word slot with at least one token, compute (start_frame,
     end_frame) as the min/max over its tokens' extended-trellis label-state
-    spans. Token position p (an index into the combined token-id list)
-    lives at extended state 2*p+1."""
+    spans, plus the per-token spans themselves (`token_frame_spans`) --
+    needed for the phoneme/letter-tier output (see `cells.py`), which
+    would otherwise require re-deriving this from `first_seen`/`last_seen`
+    a second time."""
     cues = []  # list of dicts: word, sura, aya, start_frame, end_frame, is_repeat, token_ids_global_pos
     for slot in word_slots:
         positions = slot["token_positions"]
         if not positions:
             continue
-        starts = [first_seen[2 * p + 1] for p in positions]
-        ends = [last_seen[2 * p + 1] for p in positions]
-        if any(s < 0 for s in starts) or any(e < 0 for e in ends):
+        spans = token_frame_spans(positions, first_seen, last_seen)
+        if spans is None:
             continue
+        per_token_spans, word_start, word_end = spans
         cues.append({
             "word": slot["word"],
             "sura": slot["sura"],
             "aya": slot["aya"],
             "is_ayah_final": slot["is_ayah_final"],
-            "start_frame": min(starts),
-            "end_frame": max(ends),
+            "start_frame": word_start,
+            "end_frame": word_end,
             "is_repeat": False,
             "token_positions": positions,
+            "token_char_idx": slot["token_char_idx"],
+            "letters": slot["letters"],
+            "token_frame_spans": per_token_spans,
         })
     return cues
 
@@ -88,25 +124,24 @@ def _repeat_window_candidate(word_indices, cues, log_probs, combined_token_ids, 
     doubled_ids = phrase_token_ids + phrase_token_ids
 
     window_log_probs = log_probs[window_start:window_end + 1]
-    ext2, path2 = ctc_forced_align(window_log_probs, doubled_ids, blank_id)
+    ext2, path2, margins2 = ctc_forced_align(window_log_probs, doubled_ids, blank_id)
     if ext2 is None:
         return None
 
     num_states = len(ext2)
     first_seen, last_seen = frame_spans_from_path(path2, num_states)
 
-    def states_for(local_offset, count):
-        return [2 * p + 1 for p in range(local_offset, local_offset + count)]
+    def positions_for(local_offset, count):
+        return list(range(local_offset, local_offset + count))
 
-    copy1_states = states_for(0, L)
-    copy2_states = states_for(L, L)
-    if any(first_seen[s] < 0 for s in copy1_states + copy2_states):
+    copy1_positions = positions_for(0, L)
+    copy2_positions = positions_for(L, L)
+    copy1_spans = token_frame_spans(copy1_positions, first_seen, last_seen)
+    copy2_spans = token_frame_spans(copy2_positions, first_seen, last_seen)
+    if copy1_spans is None or copy2_spans is None:
         return None
-
-    copy1_start_local = min(first_seen[s] for s in copy1_states)
-    copy1_end_local = max(last_seen[s] for s in copy1_states)
-    copy2_start_local = min(first_seen[s] for s in copy2_states)
-    copy2_end_local = max(last_seen[s] for s in copy2_states)
+    _copy1_token_spans, copy1_start_local, copy1_end_local = copy1_spans
+    _copy2_token_spans, copy2_start_local, copy2_end_local = copy2_spans
 
     timing_plausible = (
         copy2_start_local > copy1_end_local
@@ -120,15 +155,18 @@ def _repeat_window_candidate(word_indices, cues, log_probs, combined_token_ids, 
     per_word_copy2 = {}
     for m, j in enumerate(word_indices):
         nt = word_ntoks[m]
-        s1_states = states_for(offsets[m], nt)
-        s2_states = states_for(L + offsets[m], nt)
-        per_word_copy1[j] = (min(first_seen[s] for s in s1_states), max(last_seen[s] for s in s1_states))
-        per_word_copy2[j] = (min(first_seen[s] for s in s2_states), max(last_seen[s] for s in s2_states))
+        s1_spans = token_frame_spans(positions_for(offsets[m], nt), first_seen, last_seen)
+        s2_spans = token_frame_spans(positions_for(L + offsets[m], nt), first_seen, last_seen)
+        s1_token_spans, s1_start, s1_end = s1_spans
+        s2_token_spans, s2_start, s2_end = s2_spans
+        per_word_copy1[j] = (s1_start, s1_end, s1_token_spans)
+        per_word_copy2[j] = (s2_start, s2_end, s2_token_spans)
 
     return {
         "window_log_probs": window_log_probs,
         "ext": ext2,
         "path": path2,
+        "margins": margins2,
         "copy1_start_local": copy1_start_local,
         "copy1_end_local": copy1_end_local,
         "copy2_start_local": copy2_start_local,
@@ -497,13 +535,39 @@ def detect_and_fix_repeats(cues, log_probs, combined_token_ids, blank_id, ext, p
     if not accepted_fixes:
         return cues
 
+    def _shift_token_spans(token_spans, offset):
+        return [(s + offset, e + offset) for s, e in token_spans]
+
+    def _spliced_cue(orig, start_local, end_local, token_spans_local, window_start, cand, is_repeat):
+        # Confidence signals for a repeat-spliced word MUST be computed
+        # against `cand`'s own LOCAL doubled-reference re-alignment
+        # (window_log_probs/ext/path/margins), never the main pass's --
+        # this word's frames live in a different, locally re-derived
+        # trellis than the one the main-pass ext/path/margins describe, so
+        # reusing the main pass's arrays here would silently score the
+        # wrong symbols. Pre-computing these here (rather than leaving them
+        # for confidence.flag_low_confidence_words to fill in generically)
+        # is what lets that function treat "already has avg_logprob" as
+        # the signal to skip a cue -- see its docstring.
+        return {
+            **orig,
+            "start_frame": start_local + window_start,
+            "end_frame": end_local + window_start,
+            "is_repeat": is_repeat,
+            "token_frame_spans": _shift_token_spans(token_spans_local, window_start),
+            "avg_logprob": avg_logprob_along_path(
+                cand["window_log_probs"], cand["ext"], cand["path"], start_local, end_local,
+            ),
+            "min_decision_margin": per_word_min_margin(cand["margins"], start_local, end_local),
+        }
+
     fixed = [c for j, c in enumerate(cues) if j not in consumed]
     for word_indices, cand, window_start in accepted_fixes.values():
         for j in word_indices:
-            s1, e1 = cand["per_word_copy1"][j]
-            s2, e2 = cand["per_word_copy2"][j]
+            s1, e1, tok_spans1 = cand["per_word_copy1"][j]
+            s2, e2, tok_spans2 = cand["per_word_copy2"][j]
             orig = cues[j]
-            fixed.append({**orig, "start_frame": s1 + window_start, "end_frame": e1 + window_start, "is_repeat": False})
-            fixed.append({**orig, "start_frame": s2 + window_start, "end_frame": e2 + window_start, "is_repeat": True})
+            fixed.append(_spliced_cue(orig, s1, e1, tok_spans1, window_start, cand, is_repeat=False))
+            fixed.append(_spliced_cue(orig, s2, e2, tok_spans2, window_start, cand, is_repeat=True))
 
     return fixed

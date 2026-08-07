@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 /model/*.onnx
 /srt_output/
+/.devdocs/
+/session-*.md

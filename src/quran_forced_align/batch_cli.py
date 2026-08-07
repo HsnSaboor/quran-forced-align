@@ -16,7 +16,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from .cli import add_tuning_args
 from .pipeline import align_surah
-from .srt import emit_json, emit_srt
+from .srt import emit_json_rich, emit_srt
 
 
 def parse_surah_list(spec: str) -> list[int]:
@@ -44,7 +44,7 @@ def _align_one_surah(surah: int, audio_dir: str, out_dir: str, model_path: str, 
     audio_path = os.path.join(audio_dir, f"{surah:03d}.mp3")
     out_path = os.path.join(out_dir, f"{surah:03d}.srt")
 
-    cue_tuples = align_surah(
+    records = align_surah(
         surah, audio_path,
         model_path=model_path,
         tokens_path=tokens_path,
@@ -58,14 +58,14 @@ def _align_one_surah(surah: int, audio_dir: str, out_dir: str, model_path: str, 
     )
 
     os.makedirs(out_dir, exist_ok=True)
-    emit_srt(cue_tuples, out_path)
+    emit_srt(records, out_path)
     json_out = os.path.splitext(out_path)[0] + ".json"
-    emit_json(cue_tuples, json_out)
+    emit_json_rich(records, json_out)
 
-    n_repeats = sum(1 for c in cue_tuples if c[5])
+    n_repeats = sum(1 for r in records if r["is_repeat"])
     return {
         "surah": surah,
-        "n_words": len(cue_tuples),
+        "n_words": len(records),
         "n_repeats": n_repeats,
         "wall_clock_sec": time.monotonic() - t0,
     }

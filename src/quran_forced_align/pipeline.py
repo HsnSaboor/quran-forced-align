@@ -1,5 +1,5 @@
 """Single source-of-truth pipeline: surah number + audio path -> word-level
-cue tuples. Both `cli.py` (single-surah) and `batch_cli.py` (multi-surah,
+cue records. Both `cli.py` (single-surah) and `batch_cli.py` (multi-surah,
 multi-process) call `align_surah` -- no wiring logic is duplicated between
 them.
 
@@ -75,6 +75,39 @@ with two cues (one tagged is_repeat=True) and spliced back in. See
 `repeats.detect_and_fix_repeats` for the full detail (including four
 independently-verified correctness fixes on top of the original design).
 
+OUTPUT RICHNESS: PHONEME/LETTER TIER + TAJWEED + CONFIDENCE (all free)
+------------------------------------------------------------------------
+Three additions layered on top of the base word-level alignment, all pure
+post-processing over data the pipeline already computes -- none of them
+re-run the ONNX model or the Viterbi DP, and none add a new O(T*M) pass:
+
+  - Phoneme/letter tier: the Viterbi backtrace already produces a frame
+    span for every individual reference TOKEN (see viterbi.frame_spans_from_path),
+    not just every word -- `repeats.extract_word_frame_spans` used to
+    collapse this to a word-level min/max and discard the per-token spans;
+    it now keeps them (`token_frame_spans`), and `cells.build_letter_tier`
+    groups them by which Uthmani letter each token belongs to (using
+    `reference.py`'s already-computed phoneme-to-char mapping).
+  - Tajweed rules + silent letters: `reference.build_text_reference`
+    already calls `quran_transcript.quran_phonetizer`, which tags madd/
+    qalqalah rules and silent (deleted) letters per Uthmani character --
+    previously only `.pos` was read from its output; `.tajweed_rules`/
+    `.deleted` are now threaded through into the letter tier too. A
+    bounded per-ayah-boundary probe (`reference._boundary_bridge_rules`)
+    additionally recovers wasl-only madd-rule changes at ayah boundaries
+    that per-ayah phonetization alone would miss -- see that function's
+    docstring for why a single whole-surah phonetizer call was tried and
+    rejected (super-linear cost, unusable at Al-Baqarah's scale).
+  - Confidence signals: `confidence.flag_low_confidence_words` surfaces two
+    signals for every word -- the same average-log-probability quantity
+    `repeats.py` already computed for repeat-anomaly screening (now
+    computed for every word, not just anomalous ones), and a new
+    "decision margin" (best-minus-second-best of the 3 candidate scores
+    `viterbi._backtrack_step` already computes and discards per backtrace
+    step). The margin is the closest zero-cost analogue an exact Viterbi
+    DP has to a multi-beam-search-width disagreement signal -- see
+    confidence.py's module docstring.
+
 DETERMINISM
 ------------
 Every source of nondeterminism found during implementation was pinned:
@@ -94,12 +127,13 @@ Every source of nondeterminism found during implementation was pinned:
     and doesn't reassociate anything.
 """
 from .audio import load_audio_as_wav16k
+from .confidence import flag_low_confidence_words
 from .constants import DEFAULT_MAX_REPEAT_WINDOW_WORDS, MIN_WORD_DUR, SAMPLE_RATE
 from .features import compute_fbank_features
 from .onnx_model import make_onnx_session, run_streaming_log_probs
 from .reference import build_combined_reference
 from .repeats import detect_and_fix_repeats, extract_word_frame_spans
-from .srt import cues_to_tuples
+from .srt import build_rich_records
 from .tokenizer import load_tokens
 from .viterbi import ctc_forced_align, frame_spans_from_path
 
@@ -108,10 +142,11 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
                  anomaly_low_ratio: float = 0.15, anomaly_high_ratio: float = 3.0,
                  ayah_final_high_ratio_mult: float = 1.5, repeat_confidence_margin: float = 1.0,
                  max_repeat_window_words: int | None = DEFAULT_MAX_REPEAT_WINDOW_WORDS,
-                 tail_silence_sec: float = 0.3, verbose: bool = True) -> list[tuple]:
+                 tail_silence_sec: float = 0.3, verbose: bool = True) -> list[dict]:
     """Run the full forced-alignment + repeat-detection pipeline for one
-    surah's audio and return its word-level cue tuples (word, start, end,
-    sura, aya, is_repeat), matching what `srt.cues_to_tuples` produces.
+    surah's audio and return its word-level cue records, sorted by start
+    time -- see `srt.build_rich_records` for the exact record shape (word/
+    timing/repeat flag/confidence signals/letter-phoneme-tajweed tier).
 
     Keyword-arg defaults match the current CLI's argparse defaults exactly
     (see cli.py's --anomaly-low-ratio, --anomaly-high-ratio,
@@ -122,23 +157,23 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
         if verbose:
             print(msg)
 
-    log(f"[1/5] Building whole-surah word<->phoneme reference for surah {surah}...")
+    log(f"[1/6] Building whole-surah word<->phoneme reference for surah {surah}...")
     tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
     combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len)
     log(f"      {len(word_slots)} words total, {len(combined_token_ids)} reference tokens")
 
-    log(f"[2/5] Loading + extracting deterministic fbank features: {audio_path}")
+    log(f"[2/6] Loading + extracting deterministic fbank features: {audio_path}")
     samples = load_audio_as_wav16k(audio_path)
     log(f"      {len(samples) / SAMPLE_RATE:.1f}s of audio")
     feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
 
-    log("[3/5] Running raw-ONNX streaming Zipformer2-CTC (cache-threaded chunks)...")
+    log("[3/6] Running raw-ONNX streaming Zipformer2-CTC (cache-threaded chunks)...")
     sess = make_onnx_session(model_path)
     log_probs, seconds_per_frame = run_streaming_log_probs(sess, feats)
     log(f"      log_probs shape {log_probs.shape}, {seconds_per_frame * 1000:.1f}ms/output-frame")
 
-    log("[4/5] CTC forced-alignment Viterbi over the WHOLE surah at once...")
-    ext, path = ctc_forced_align(log_probs, combined_token_ids, blank_id)
+    log("[4/6] CTC forced-alignment Viterbi over the WHOLE surah at once...")
+    ext, path, margins = ctc_forced_align(log_probs, combined_token_ids, blank_id)
     if ext is None:
         raise RuntimeError(
             "forced alignment failed: audio too short for this surah's reference "
@@ -148,7 +183,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     cues = extract_word_frame_spans(word_slots, first_seen, last_seen)
     log(f"      {len(cues)}/{len(word_slots)} words got timing from the main pass")
 
-    log("[5/5] Detecting + locally re-aligning repeats...")
+    log("[5/6] Detecting + locally re-aligning repeats...")
     min_word_dur_frames = MIN_WORD_DUR / seconds_per_frame
     cues = detect_and_fix_repeats(
         cues, log_probs, combined_token_ids, blank_id, ext, path,
@@ -157,4 +192,8 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
         confidence_margin=repeat_confidence_margin,
         max_repeat_window_words=max_repeat_window_words,
     )
-    return cues_to_tuples(cues, seconds_per_frame)
+
+    log("[6/6] Computing per-word alignment-confidence signals...")
+    cues = flag_low_confidence_words(cues, log_probs, ext, path, margins)
+
+    return build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok)
