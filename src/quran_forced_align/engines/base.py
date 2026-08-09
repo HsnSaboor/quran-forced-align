@@ -37,3 +37,16 @@ class Engine(Protocol):
         already expects and handles.
         """
         ...
+
+    # `run_inference_batched`/`run_inference_intra_surah_split` are NOT
+    # part of this protocol: both are CUDA-only capabilities (see
+    # `engines.cuda.CUDAEngine`), since only the GPU's model-graph-level
+    # `N` batch axis makes either worthwhile -- the CPU engine has no
+    # equivalent (CPU parallelism across surahs already comes for free
+    # from `batch_cli.py`'s `ProcessPoolExecutor`, one process per surah,
+    # which is the CPU-appropriate unit of parallelism, and a single
+    # surah's CPU inference has no batch axis to exploit at all). Callers
+    # that want either capability (`pipeline.align_surahs_batched`,
+    # `pipeline.align_surah`'s `intra_surah_split=True`) check for the
+    # method with `hasattr`/`isinstance` rather than this protocol
+    # declaring it as a required (but usually absent) member.

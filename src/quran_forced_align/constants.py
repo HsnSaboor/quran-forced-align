@@ -19,6 +19,19 @@ MOSHAF = MoshafAttributes(
 FRAME_SHIFT_SEC = 0.01  # 10ms fbank hop -- matches build_surah_srt / model export convention
 MIN_WORD_DUR = 0.15     # floor for degenerate (near-zero-length) word cues, matches build_surah_srt
 
+# Fbank feature-frame shift, in raw audio SAMPLES -- the single source of
+# truth for the "10ms hop at 16kHz = 160 samples/frame" relationship that
+# FRAME_SHIFT_SEC and SAMPLE_RATE together already encode, but as a
+# pre-multiplied integer for callers that need to convert between raw-
+# sample-index units (silence.find_silence_midpoints's output) and
+# fbank-feature-frame-index units (onnx_model.py's chunk-index math)
+# without repeating that multiplication (and its rounding) in more than
+# one place -- found as a real duplication risk in code review: silence.py
+# and pipeline.py each independently hardcoded this same value as "160"
+# with no shared reference, which could silently desynchronize if
+# features.py's frame_shift_ms ever changed without both being updated.
+FBANK_FRAME_SHIFT_SAMPLES = int(FRAME_SHIFT_SEC * SAMPLE_RATE)
+
 # Default repeat-detection tuning values, shared by pipeline.align_surah's keyword defaults AND
 # cli.py/batch_cli.py's --anomaly-low-ratio/--anomaly-high-ratio/--ayah-final-high-ratio-mult/
 # --repeat-confidence-margin argparse defaults, so the two can never silently drift apart (a

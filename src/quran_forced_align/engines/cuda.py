@@ -82,9 +82,17 @@ engine's own margins are equally engine-specific already (they depend on
 `viterbi.py`'s exact stay/advance/skip DP formulation), and this
 docstring exists precisely so that fact isn't rediscovered by surprise.
 """
+import math
+
 import numpy as np
 
-from ..onnx_model import make_onnx_session, run_streaming_log_probs
+from ..onnx_model import (
+    choose_intra_surah_split_points,
+    make_onnx_session,
+    run_streaming_log_probs_batched_cuda_iobinding,
+    run_streaming_log_probs_cuda_iobinding,
+    run_streaming_log_probs_intra_surah_split_cuda,
+)
 from ..trellis import build_ext
 
 
@@ -115,6 +123,12 @@ class CUDAEngine:
         # footprint.
         import onnxruntime as ort
         import torch
+
+        # Cache of the last run_inference() call's (numpy array, resident
+        # GPU tensor) pair -- see forced_align's use of this below. Reset
+        # implicitly by every run_inference call (a new surah/window).
+        self._last_log_probs_cpu = None
+        self._last_log_probs_gpu = None
 
         if not torch.cuda.is_available():
             raise RuntimeError(
@@ -155,13 +169,116 @@ class CUDAEngine:
             )
 
     def run_inference(self, feats):
-        # float32, not this function's float64 default: torchaudio's
-        # forced_align (called below) only accepts float32 log-probs
-        # anyway, so requesting float64 here first would force an
-        # avoidable full-matrix float32->float64->float32 round trip for
-        # data whose extra precision gets discarded again immediately --
-        # see run_streaming_log_probs's `output_dtype` docstring.
-        return run_streaming_log_probs(self._session, feats, output_dtype=np.float32)
+        # IO-Binding variant (see onnx_model.run_streaming_log_probs_cuda_iobinding's
+        # docstring): keeps every cache tensor GPU-resident across the whole
+        # chunk loop instead of round-tripping each of the ~97 cache
+        # tensors through host memory on every chunk via plain
+        # sess.run(None, feed) -- verified empirically byte-identical to
+        # that plain-numpy-I/O path and deterministic across repeated
+        # calls, at no additional risk. Always returns float32 (torchaudio's
+        # forced_align, called below, only accepts float32 log-probs
+        # anyway -- see that function's own docstring for why the CPU
+        # engine's float64 default doesn't apply to this engine).
+        log_probs, seconds_per_frame = run_streaming_log_probs_cuda_iobinding(self._session, feats)
+        # Cache this call's result so forced_align (below) can recognize a
+        # later repeat-detection call's log_probs argument as a SLICE of
+        # THIS array (see _as_device_tensor) and reuse the one resident GPU
+        # upload instead of re-uploading that slice's bytes from host on
+        # every repeat-detection candidate. Measured impact is small in
+        # practice (repeat-detection's H2D uploads total ~18ms out of a
+        # ~17s whole-surah run for a typical surah -- the acoustic-model
+        # inference above dominates wall-clock, not this), but it's a
+        # correct, zero-determinism-risk optimization, so it's applied
+        # unconditionally rather than gated behind a flag nobody would ever
+        # need to turn off.
+        self._last_log_probs_cpu = log_probs
+        self._last_log_probs_gpu = self._torch.as_tensor(log_probs, dtype=self._torch.float32, device=self._device)
+        return log_probs, seconds_per_frame
+
+    def run_inference_batched(self, feats_list):
+        """Batched-N sibling of `run_inference`: runs every surah in
+        `feats_list` through ONE streaming chunk loop, stacked along the
+        model's dynamic `N` axis, instead of `len(feats_list)` fully
+        separate `run_inference` calls -- see
+        `onnx_model.run_streaming_log_probs_batched_cuda_iobinding`'s
+        docstring for the full rationale, the ragged-length padding
+        scheme, and the empirically-verified determinism characterization
+        (batching introduces a tiny, decode-irrelevant numerical drift in
+        raw log_probs values; verified to never change any argmax or
+        forced-alignment decision across every case tested).
+
+        Returns `(log_probs_list, seconds_per_frame)`; `log_probs_list[i]`
+        corresponds to `feats_list[i]`, already truncated to that stream's
+        own real (unpadded) length. Does NOT populate this engine's
+        single-stream GPU-residency cache (`_last_log_probs_cpu`/`_gpu`,
+        see `run_inference`/`_as_device_tensor`) -- callers doing batched
+        multi-surah alignment run each surah's OWN subsequent
+        `forced_align`/repeat-detection calls against its own
+        `log_probs_list[i]` slice sequentially after this call returns (the
+        alignment step, unlike inference, is not batched -- see this
+        module's other docstrings for why `torchaudio.functional.forced_align`
+        itself only supports batch_size==1), so each surah's own
+        `forced_align` call re-establishes that per-surah cache the normal
+        way when the caller next invokes this engine's `forced_align`.
+        """
+        return run_streaming_log_probs_batched_cuda_iobinding(self._session, feats_list)
+
+    def run_inference_intra_surah_split(self, feats, silence_feature_frame_positions, max_splits=None):
+        """Split THIS SINGLE surah's own acoustic-model inference into
+        multiple warm-up-overlapped segments at real silence points, run
+        via this engine's own batched-inference machinery, instead of one
+        fully-serial chunk loop -- see
+        `onnx_model.run_streaming_log_probs_intra_surah_split_cuda`'s
+        docstring for the full rationale, safety margin calibration, and
+        empirically-verified decode-level determinism characterization.
+
+        `silence_feature_frame_positions` are candidate silence-boundary
+        positions in FBANK-FEATURE-FRAME units (see
+        `silence.find_silence_midpoints`'s raw-audio-sample-unit output
+        and `pipeline.align_surah`'s conversion between the two units --
+        this engine only ever sees already-extracted features, never raw
+        audio, so it cannot run silence detection itself; the caller must
+        run it on the raw audio and convert units before calling this
+        method). An empty list (e.g. `pipeline.align_surah` found no
+        usable silence gap in this surah's audio) makes this method
+        behave exactly like plain `run_inference`.
+        """
+        meta = self._session.get_modelmeta().custom_metadata_map
+        offset_frames = int(meta.get("decode_chunk_len", 48))
+        segment_frames = int(meta.get("T", 61))
+        T_raw = feats.shape[0]
+        n_chunks_total = 1 if T_raw <= segment_frames else 1 + math.ceil((T_raw - segment_frames) / offset_frames)
+
+        split_chunk_indices = choose_intra_surah_split_points(
+            silence_feature_frame_positions, offset_frames, n_chunks_total, max_splits=max_splits
+        )
+
+        if not split_chunk_indices:
+            log_probs, seconds_per_frame = run_streaming_log_probs_cuda_iobinding(self._session, feats)
+        else:
+            log_probs, seconds_per_frame = run_streaming_log_probs_intra_surah_split_cuda(
+                self._session, feats, split_chunk_indices
+            )
+        self._last_log_probs_cpu = log_probs
+        self._last_log_probs_gpu = self._torch.as_tensor(log_probs, dtype=self._torch.float32, device=self._device)
+        return log_probs, seconds_per_frame
+
+    def _as_device_tensor(self, log_probs):
+        """Return `log_probs` (or, if it's a numpy VIEW into the array from
+        the most recent `run_inference` call -- exactly what every
+        repeat-detection candidate window is, see `repeats/candidate.py`'s
+        `log_probs[window_start:window_end + 1]` -- the corresponding SLICE
+        of that call's already-resident GPU tensor) as a GPU tensor,
+        without a redundant host->device upload for the already-resident
+        case.
+        """
+        torch = self._torch
+        if self._last_log_probs_cpu is not None and log_probs.base is self._last_log_probs_cpu:
+            full = log_probs.base
+            offset_rows = (log_probs.ctypes.data - full.ctypes.data) // full[0].nbytes
+            n_rows = log_probs.shape[0]
+            return self._last_log_probs_gpu[offset_rows:offset_rows + n_rows]
+        return torch.as_tensor(log_probs, dtype=torch.float32, device=self._device)
 
     def forced_align(self, log_probs, ref_ids, blank_id):
         import torchaudio.functional as taf
@@ -173,13 +290,7 @@ class CUDAEngine:
             return None, None, None
 
         ext = build_ext(ref_ids, blank_id)
-        # log_probs is already float32 (see run_inference above) for every
-        # whole-surah call; repeats/candidate.py's local re-alignment
-        # windows are plain numpy SLICES of that same float32 array, so
-        # this is a no-op dtype-cast (copy=False-equivalent via
-        # as_tensor's own zero-copy-when-possible behavior) in the common
-        # case, not a redundant cast.
-        log_probs_t = torch.as_tensor(log_probs, dtype=torch.float32, device=self._device).unsqueeze(0)
+        log_probs_t = self._as_device_tensor(log_probs).unsqueeze(0)
         targets_t = torch.as_tensor(ref_ids, dtype=torch.int32, device=self._device).unsqueeze(0)
 
         try:

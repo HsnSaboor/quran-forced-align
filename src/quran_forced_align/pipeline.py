@@ -135,6 +135,7 @@ from .constants import (
     DEFAULT_MAX_REPEAT_WINDOW_WORDS,
     DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     DEFAULT_TAIL_SILENCE_SEC,
+    FBANK_FRAME_SHIFT_SAMPLES,
     MIN_WORD_DUR,
     SAMPLE_RATE,
 )
@@ -142,39 +143,24 @@ from .engines import get_engine
 from .features import compute_fbank_features
 from .reference import build_combined_reference
 from .repeats import detect_and_fix_repeats, extract_word_frame_spans
+from .silence import find_silence_midpoints
 from .srt import build_rich_records
 from .tokenizer import load_tokens
 from .trellis import frame_spans_from_path
 
 
-def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
-                 device: str = "cpu",
-                 anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
-                 anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
-                 ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
-                 repeat_confidence_margin: float = DEFAULT_REPEAT_CONFIDENCE_MARGIN,
-                 max_repeat_window_words: int | None = DEFAULT_MAX_REPEAT_WINDOW_WORDS,
-                 tail_silence_sec: float = DEFAULT_TAIL_SILENCE_SEC, verbose: bool = True) -> list[dict]:
-    """Run the full forced-alignment + repeat-detection pipeline for one
-    surah's audio and return its word-level cue records, sorted by start
-    time -- see `srt.build_rich_records` for the exact record shape (word/
-    timing/repeat flag/confidence signals/letter-phoneme-tajweed tier).
+def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log):
+    """Steps [1/6]-[2/6] of `align_surah`: build the word<->phoneme
+    reference and extract fbank features for one surah -- factored out so
+    `align_surahs_batched` can run this same per-surah preparation for
+    every surah in a batch BEFORE the one batched inference call, without
+    duplicating this logic.
 
-    `device` selects the forced-alignment execution engine (`"cpu"`
-    (default) or `"cuda"` -- see `engines/__init__.py`); both engines
-    implement the identical `(ext, path, margins)` contract, so every step
-    after `[3/6]` below is engine-agnostic.
-
-    Keyword-arg defaults are the `constants.py` DEFAULT_* values cli.py's
-    argparse defaults (--anomaly-low-ratio, --anomaly-high-ratio,
-    --ayah-final-high-ratio-mult, --repeat-confidence-margin,
-    --max-repeat-window-words, --tail-silence-sec) also read from, so the
-    two can never silently drift apart.
+    Returns `(tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples)`.
+    `samples` (the raw 16kHz waveform) is returned alongside `feats` so
+    `align_surah`'s intra-surah-split path can run silence detection on it
+    without re-loading/re-decoding the audio file a second time.
     """
-    def log(msg):
-        if verbose:
-            print(msg)
-
     log(f"[1/6] Building whole-surah word<->phoneme reference for surah {surah}...")
     tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
     combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len)
@@ -184,12 +170,21 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     samples = load_audio_as_wav16k(audio_path)
     log(f"      {len(samples) / SAMPLE_RATE:.1f}s of audio")
     feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
+    return tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples
 
-    log(f"[3/6] Running streaming Zipformer2-CTC on the {device!r} engine (cache-threaded chunks)...")
-    engine = get_engine(device)(model_path)
-    log_probs, seconds_per_frame = engine.run_inference(feats)
-    log(f"      log_probs shape {log_probs.shape}, {seconds_per_frame * 1000:.1f}ms/output-frame")
 
+def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_ids, blank_id,
+                           word_slots, id2tok, anomaly_low_ratio, anomaly_high_ratio,
+                           ayah_final_high_ratio_mult, repeat_confidence_margin,
+                           max_repeat_window_words, log):
+    """Steps [4/6]-[6/6] of `align_surah`: forced-alignment, repeat
+    detection, and confidence scoring, given an ALREADY-COMPUTED
+    `log_probs` matrix -- factored out so `align_surahs_batched` can run
+    this same per-surah post-processing for every surah's own
+    `log_probs` slice after the one batched inference call, without
+    duplicating this logic. Identical to what `align_surah` itself runs
+    for the single-surah, unbatched case.
+    """
     log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
     ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
     if ext is None:
@@ -215,3 +210,182 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     cues = flag_low_confidence_words(cues, log_probs, ext, path, margins)
 
     return build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok)
+
+
+def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
+                 device: str = "cpu", intra_surah_split: bool = False,
+                 anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
+                 anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
+                 ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
+                 repeat_confidence_margin: float = DEFAULT_REPEAT_CONFIDENCE_MARGIN,
+                 max_repeat_window_words: int | None = DEFAULT_MAX_REPEAT_WINDOW_WORDS,
+                 tail_silence_sec: float = DEFAULT_TAIL_SILENCE_SEC, verbose: bool = True) -> list[dict]:
+    """Run the full forced-alignment + repeat-detection pipeline for one
+    surah's audio and return its word-level cue records, sorted by start
+    time -- see `srt.build_rich_records` for the exact record shape (word/
+    timing/repeat flag/confidence signals/letter-phoneme-tajweed tier).
+
+    `device` selects the forced-alignment execution engine (`"cpu"`
+    (default) or `"cuda"` -- see `engines/__init__.py`); both engines
+    implement the identical `(ext, path, margins)` contract, so every step
+    after `[3/6]` below is engine-agnostic.
+
+    `intra_surah_split` (CUDA-only; ignored on `device="cpu"`): split THIS
+    ONE surah's own acoustic-model inference into multiple warm-up-
+    overlapped segments at real silence points, run together via the
+    CUDA engine's batched-inference machinery, for real single-surah GPU
+    speedup (verified empirically: ~2x on a real T4 GPU session for a
+    ~6-minute surah split into 3 segments) -- see
+    `engines.cuda.CUDAEngine.run_inference_intra_surah_split` and
+    `onnx_model.run_streaming_log_probs_intra_surah_split_cuda`'s
+    docstrings for the full rationale and the empirically-verified
+    decode-level determinism characterization (word timings/repeat flags
+    are unaffected; a tiny, decode-irrelevant floating-point difference in
+    raw log_probs values is an unavoidable, verified-harmless artifact).
+    Falls back to unsplit inference automatically if the audio has no
+    usable silence gap (e.g. a short surah, or one recited with no
+    internal pause at all).
+
+    Keyword-arg defaults are the `constants.py` DEFAULT_* values cli.py's
+    argparse defaults (--anomaly-low-ratio, --anomaly-high-ratio,
+    --ayah-final-high-ratio-mult, --repeat-confidence-margin,
+    --max-repeat-window-words, --tail-silence-sec) also read from, so the
+    two can never silently drift apart.
+
+    For batch-processing MANY surahs on a CUDA GPU, see
+    `align_surahs_batched`, which shares steps [1/6]/[2/6]/[4/6]-[6/6]'s
+    exact logic with this function (via `_build_surah_inputs`/
+    `_align_from_log_probs`) but batches step [3/6]'s acoustic-model
+    inference across surahs for real GPU throughput.
+    """
+    def log(msg):
+        if verbose:
+            print(msg)
+
+    tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = _build_surah_inputs(
+        surah, audio_path, tokens_path, tail_silence_sec, log
+    )
+
+    log(f"[3/6] Running streaming Zipformer2-CTC on the {device!r} engine (cache-threaded chunks)...")
+    engine = get_engine(device)(model_path)
+    if intra_surah_split and hasattr(engine, "run_inference_intra_surah_split"):
+        silence_samples = find_silence_midpoints(samples, SAMPLE_RATE)
+        silence_feature_frames = [pos // FBANK_FRAME_SHIFT_SAMPLES for pos in silence_samples]
+        log(f"      found {len(silence_feature_frames)} candidate silence split point(s)")
+        log_probs, seconds_per_frame = engine.run_inference_intra_surah_split(feats, silence_feature_frames)
+    else:
+        log_probs, seconds_per_frame = engine.run_inference(feats)
+    log(f"      log_probs shape {log_probs.shape}, {seconds_per_frame * 1000:.1f}ms/output-frame")
+
+    return _align_from_log_probs(
+        engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
+        anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
+        repeat_confidence_margin, max_repeat_window_words, log,
+    )
+
+
+def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_path: str, tokens_path: str,
+                          anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
+                          anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
+                          ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
+                          repeat_confidence_margin: float = DEFAULT_REPEAT_CONFIDENCE_MARGIN,
+                          max_repeat_window_words: int | None = DEFAULT_MAX_REPEAT_WINDOW_WORDS,
+                          tail_silence_sec: float = DEFAULT_TAIL_SILENCE_SEC,
+                          verbose: bool = True) -> list[list[dict]]:
+    """CUDA-only batched sibling of `align_surah`: runs the acoustic-model
+    inference step for ALL surahs in `surahs`/`audio_paths` through ONE
+    streaming chunk loop (see `engines.cuda.CUDAEngine.run_inference_batched`
+    and `onnx_model.run_streaming_log_probs_batched_cuda_iobinding` for the
+    full rationale and ragged-length padding scheme), then runs each
+    surah's own forced-alignment/repeat-detection/confidence steps
+    (identical logic to `align_surah`'s steps [4/6]-[6/6], via
+    `_align_from_log_probs`) sequentially against its own `log_probs`
+    slice.
+
+    Returns a list of per-surah word-cue-record lists, one per entry of
+    `surahs`/`audio_paths`, in the same order.
+
+    DETERMINISM: batched acoustic-model inference introduces a tiny
+    (~1e-4-magnitude) numerical difference in raw log_probs values versus
+    running the same audio alone or in a different batch -- verified
+    empirically (on a real Colab T4 GPU session, across a full real surah
+    and across genuinely different audio streams batched together) to
+    NEVER change any argmax decision or `torchaudio.functional.forced_align`
+    alignment path; every test found this function's actual OUTPUT
+    (word timings, repeat flags, confidence signals) is unaffected by
+    batching. Repeated calls with the SAME batch composition (same surahs,
+    same order) reproduce identically. See
+    `run_streaming_log_probs_batched_cuda_iobinding`'s docstring for the
+    full characterization and for how to get the CPU/single-stream
+    engines' stronger batch-composition-independent guarantee instead
+    (call `align_surah` per surah, or use `device="cpu"`).
+    """
+    def log(msg):
+        if verbose:
+            print(msg)
+
+    if len(surahs) != len(audio_paths):
+        raise ValueError(
+            f"align_surahs_batched: surahs (len {len(surahs)}) and audio_paths "
+            f"(len {len(audio_paths)}) must be the same length"
+        )
+
+    engine = get_engine("cuda")(model_path)
+    if not hasattr(engine, "run_inference_batched"):
+        raise RuntimeError(
+            "align_surahs_batched requires an engine with batched inference support "
+            "(engines.cuda.CUDAEngine) -- got an engine with no run_inference_batched method"
+        )
+
+    per_surah_inputs = [
+        _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log)
+        for surah, audio_path in zip(surahs, audio_paths)
+    ]
+    feats_list = [inputs[5] for inputs in per_surah_inputs]
+
+    log(f"[3/6 batched] Running streaming Zipformer2-CTC for {len(surahs)} surahs in one batched pass...")
+    log_probs_list, seconds_per_frame = engine.run_inference_batched(feats_list)
+
+    results = []
+    for surah, (tok2id, id2tok, blank_id, combined_token_ids, word_slots, _feats, _samples), log_probs in zip(
+        surahs, per_surah_inputs, log_probs_list
+    ):
+        log(f"-- surah {surah} --")
+        # `log_probs` here is a VIEW into `run_inference_batched`'s shared
+        # batched buffer (log_probs_batched[i, :n, :]) -- its own `.base`
+        # points at THAT shared buffer, not at `log_probs` itself. Passing
+        # it to `_align_from_log_probs`/`repeats/candidate.py` as-is would
+        # make every later `log_probs[window_start:window_end+1]` slice's
+        # `.base` ALSO point at the shared batched buffer (numpy collapses
+        # view-of-a-view chains), never matching whatever
+        # `engine._last_log_probs_cpu` is set to below -- silently
+        # defeating `_as_device_tensor`'s GPU-residency fast path for
+        # every repeat-detection candidate in the batched pipeline (a real
+        # bug found in code review: the fast path was live and correct
+        # for the single-surah/unbatched path, but always fell through to
+        # a full host->device re-upload here instead). Copying once here
+        # breaks the view chain: `log_probs` becomes its OWN base array
+        # (`.base is None`), so every later slice of it correctly matches
+        # the cache set immediately below, restoring the intended
+        # optimization for this pipeline too.
+        log_probs = log_probs.copy()
+        # Re-establish this engine's single-stream GPU-residency cache
+        # (see engines.cuda.CUDAEngine.run_inference/_as_device_tensor) for
+        # THIS surah's own log_probs slice, so its own repeat-detection
+        # candidates below still get the on-device-slice fast path instead
+        # of re-uploading from host on every K-search call -- the batched
+        # inference call above does not (and cannot generically) populate
+        # this per-surah cache itself, since it returns N separate slices
+        # of one shared batched buffer, not N independently-cached arrays.
+        if hasattr(engine, "_last_log_probs_cpu"):
+            engine._last_log_probs_cpu = log_probs
+            engine._last_log_probs_gpu = engine._torch.as_tensor(
+                log_probs, dtype=engine._torch.float32, device=engine._device
+            )
+        records = _align_from_log_probs(
+            engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
+            anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
+            repeat_confidence_margin, max_repeat_window_words, log,
+        )
+        results.append(records)
+    return results

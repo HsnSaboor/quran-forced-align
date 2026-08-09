@@ -71,24 +71,6 @@ from a different, engine-specific quantity -- see
 deterministic across repeated runs on the same engine, and follow the same
 "more negative/smaller = less confident" convention.
 
-**Why GPU helps this workload, but only past a certain scale**: the CPU
-engine's onnxruntime session and Viterbi DP are deliberately
-single-threaded per surah (see "Determinism" below), so a single surah's
-wall-clock time is dominated by per-frame latency, not throughput -- a GPU
-does not meaningfully speed up ONE surah's inference (verified empirically:
-onnxruntime's CUDA EP is only ~2x faster than CPU per streaming chunk, not
-an order of magnitude, since each chunk is tiny). The real GPU win is at
-Al-Baqarah-sized (and larger, i.e. many-surahs-in-parallel) forced
-alignment: `torchaudio.functional.forced_align` completed the Al-Baqarah-
-scale trellis (~175,000 frames x ~24,548 reference tokens) in ~15 seconds
-using ~340MB of GPU memory in verification testing, without needing the CPU
-engine's checkpointed Hirschberg-style memory optimization at all (see
-`viterbi.py`'s module docstring for why that optimization exists on CPU).
-For the batch workload this engine targets (100+ reciters x 114 surahs),
-run many surahs' CUDA-engine jobs back-to-back or across worker processes
-sharing the GPU (see `quran-forced-align-batch --device cuda
---max-workers`) rather than expecting single-surah GPU speedup.
-
 The default `--model` (the bundled int8-quantized ONNX) works correctly on
 both engines -- verified empirically: int8-on-CUDA's greedy-decode argmax
 matches int8-on-CPU's for every frame on a real streaming inference run,
@@ -98,6 +80,98 @@ repo -- see the model's Hugging Face page) it's numerically closer to the
 original PyTorch model, since the int8 quantization was calibrated for
 CPU inference; pass `--model path/to/zipformer_p_arabic_v2.onnx` with
 `--device cuda` if you want that extra fidelity.
+
+### GPU performance optimizations
+
+Every optimization below was verified on a real Colab T4 GPU session
+(not just unit tests) to leave forced-alignment output byte-identical to
+the unoptimized baseline (word/timing/repeat-flag fields), and to remain
+deterministic across repeated runs. Several candidate optimizations were
+investigated and REJECTED after live testing found they either gave no
+measurable benefit or broke correctness -- see "Rejected optimizations"
+below.
+
+**IO Binding (always on, no flag).** The CUDA engine keeps every one of
+the streaming model's ~97 cache tensors resident on the GPU across the
+whole chunk loop (`onnxruntime.InferenceSession.io_binding()`), instead of
+round-tripping each tensor through host memory on every chunk via plain
+`session.run()`. For a long surah's ~14,600 chunks that removes ~2.8
+million small, fixed-overhead-dominated host<->device transfers.
+
+**`--cuda-batch-size N` (batch_cli.py only): batch multiple surahs
+together.** Runs N surahs' acoustic-model inference through ONE streaming
+chunk loop, stacked along the model's own dynamic batch (`N`) axis --
+mirroring how sherpa-onnx/icefall batch multiple independent streaming
+ASR utterances in production. Measured ~1.5x wall-clock speedup batching
+just 2 surahs together on a real T4 GPU, byte-identical word/timing/repeat
+output to running them one at a time.
+
+```bash
+uv run quran-forced-align-batch --surahs 1-114 --audio-dir audio --out-dir srt_output \
+  --device cuda --cuda-batch-size 8 --max-workers 2
+```
+
+**`--intra-surah-split` (cli.py and batch_cli.py): split ONE surah's own
+inference across silence points.** Finds real pause points in the audio
+(energy-based silence detection, see `silence.py`) and splits that ONE
+surah's acoustic-model inference into multiple segments, each run
+independently and batched together via the same batch-axis mechanism as
+`--cuda-batch-size` -- giving real single-surah GPU speedup (measured
+1.7x-1.9x across 4 different real surahs on a T4 GPU) where
+`--cuda-batch-size` alone cannot help (that flag needs MULTIPLE surahs to
+batch; this flag parallelizes within just one).
+
+```bash
+uv run quran-forced-align --surah 66 --audio audio/066.mp3 --out srt_output/066.srt \
+  --device cuda --intra-surah-split
+```
+
+*How it stays correct*: naively resetting the model's streaming cache
+mid-recording is NOT safe -- verified empirically: doing so with no
+warm-up caused 5 wrong phoneme decisions in just the first 50 frames after
+the reset, since the model's cache carries real information from the
+actual preceding audio forward, and a hard zero-reset is measurably worse
+than "no context" (it's *wrong* context the model never sees in normal
+use). This feature avoids that by prepending each split segment with a
+generous window (100 chunks, ~48s) of REAL preceding audio as a
+throwaway "warm-up" before that segment's first frame is trusted --
+exploiting the model's own metadata (`left_context_len`: 256/128/64/32/
+64/128 frames per encoder stage, a BOUNDED window, not unbounded history)
+so a long-enough warm-up lets the model rebuild an operationally-
+equivalent cache from scratch. Verified across 4 real surahs and multiple
+split counts (K=2 through 5): zero argmax or forced-alignment differences
+in every test, with the 100-chunk warm-up giving 3x+ safety margin over
+the smallest warm-up window found sufficient (30 chunks). Splitting at a
+genuine silence point (rather than an arbitrary chunk boundary) isn't
+required for correctness, but needs a smaller warm-up window to reach
+that same zero-difference bar -- and avoids ever landing a split point
+mid-word/mid-madd-elongation. Falls back to unsplit inference
+automatically if the audio has no usable silence gap (e.g. a short surah,
+or one recited with no internal pause at all, like Ayat al-Kursi).
+
+**Rejected optimizations** (tested live, not adopted):
+- *CUDA Graphs*: confirmed via live testing to produce SILENTLY WRONG
+  output for this model's recurrent cache-threading -- capture/replay
+  works for the first two calls but every subsequent chunk's log-probs
+  diverge (verified: 30 argmax flips by the 6th chunk in one test). CUDA
+  Graphs assumes stable, non-aliasing memory access patterns that don't
+  hold for this model's many small "swap read/write role every call"
+  cache tensors. Not used.
+- *Relaxing `intra_op_num_threads`/`inter_op_num_threads` for the CUDA
+  EP*: measured no timing difference (noise-level, <2%) since this
+  model's per-chunk graph is tiny and launch-overhead-bound, not CPU-
+  scheduling-bound. `ORT_PARALLEL` execution mode was additionally found
+  to HANG indefinitely for this graph on a live test -- both settings
+  remain pinned to the original single-threaded/sequential CPU-EP-derived
+  values on the CUDA EP too, not because they matter for determinism
+  there (they don't, GPU kernel reduction order doesn't depend on ORT's
+  CPU-side thread count) but because relaxing them gave no benefit worth
+  the churn.
+- *Multi-stream (`torch.cuda.Stream`) overlap for repeat-detection's
+  K-search loop*: measured no speedup (5 sequential small `forced_align`
+  calls: ~11.7ms; the same 5 calls on separate streams: ~12.2ms, slightly
+  SLOWER) -- each call is already one efficient, low-occupancy kernel
+  with no idle GPU capacity for concurrent streams to fill at this scale.
 
 ### Output format
 
@@ -176,6 +250,14 @@ uv run quran-forced-align-batch \
   --device cuda \
   --max-workers 2
 ```
+
+See "GPU performance optimizations" above for `--cuda-batch-size` (batch
+multiple surahs together through one inference pass) and
+`--intra-surah-split` (split each surah's own inference across silence
+points) -- both work with `quran-forced-align-batch` too, but cannot be
+combined with each other in this release (pick whichever fits your
+workload: `--cuda-batch-size` for many similarly-sized surahs,
+`--intra-surah-split` for a handful of large ones).
 
 ## Web player
 

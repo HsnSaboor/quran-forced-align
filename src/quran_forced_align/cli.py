@@ -29,6 +29,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "CPUExecutionProvider + numpy Viterbi) or 'cuda' (onnxruntime "
                           "CUDAExecutionProvider + torchaudio.functional.forced_align; requires "
                           "the 'cuda' extra -- see pyproject.toml -- and a CUDA-capable GPU)")
+    ap.add_argument("--intra-surah-split", action="store_true",
+                     help="--device cuda ONLY: split THIS surah's own acoustic-model inference into "
+                          "multiple warm-up-overlapped segments at real silence points, for real "
+                          "single-surah GPU speedup (~2x measured on a real T4 GPU for a "
+                          "~6-minute surah). Falls back to unsplit inference automatically if no "
+                          "usable silence gap is found. See README's GPU execution section for the "
+                          "empirically-verified decode-level determinism characterization.")
     add_tuning_args(ap)
     return ap
 
@@ -67,6 +74,7 @@ def main():
         model_path=args.model,
         tokens_path=args.tokens,
         device=args.device,
+        intra_surah_split=args.intra_surah_split,
         anomaly_low_ratio=args.anomaly_low_ratio,
         anomaly_high_ratio=args.anomaly_high_ratio,
         ayah_final_high_ratio_mult=args.ayah_final_high_ratio_mult,

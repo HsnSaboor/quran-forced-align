@@ -252,6 +252,29 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
         if max_repeat_window_words is not None:
             k_max = min(k_max, max_repeat_window_words)
 
+        # PERFORMANCE NOTE (considered and rejected): this K-search loop is
+        # sequential, one engine.forced_align call per K, and each call's
+        # `break`/`continue` decisions below (via `consumed`, `best`) are
+        # genuinely data-dependent on EARLIER K's results within THIS same
+        # loop -- so overlapping K's forced_align calls across separate
+        # torch.cuda.Stream()s (to let independent GPU kernels run
+        # concurrently) was investigated as a CUDA-engine speedup and
+        # measured to give NO benefit: on a real T4 GPU session, 5
+        # sequential small forced_align calls (matching this loop's typical
+        # window/reference sizes) took ~11.7ms, vs ~12.2ms for the same 5
+        # calls issued on 5 separate streams (stream-management overhead
+        # slightly EXCEEDED any concurrency gain). This matches the
+        # underlying reason: each forced_align call is already a single,
+        # small, low-occupancy CUDA kernel launch (this whole K-search loop
+        # only runs at all for the rare anomalous words each surah has, and
+        # `k_max` is bounded by remaining words in the ayah -- a few dozen
+        # calls total per surah, not the acoustic model's ~14,600-chunk
+        # hot path) -- there's no idle GPU capacity at this scale for
+        # concurrent streams to usefully fill, and multi-stream execution
+        # would have added real complexity (synchronizing this loop's
+        # sequential `consumed`/`best` control flow against out-of-order
+        # completing streams) for a measured zero speedup. Left as a plain
+        # sequential loop.
         best = None  # (K, candidate_dict, bilateral_confidence, window_start)
         for K in range(1, k_max + 1):
             j0 = i - K + 1
