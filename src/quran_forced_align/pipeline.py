@@ -128,30 +128,48 @@ Every source of nondeterminism found during implementation was pinned:
 """
 from .audio import load_audio_as_wav16k
 from .confidence import flag_low_confidence_words
-from .constants import DEFAULT_MAX_REPEAT_WINDOW_WORDS, MIN_WORD_DUR, SAMPLE_RATE
+from .constants import (
+    DEFAULT_ANOMALY_HIGH_RATIO,
+    DEFAULT_ANOMALY_LOW_RATIO,
+    DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
+    DEFAULT_MAX_REPEAT_WINDOW_WORDS,
+    DEFAULT_REPEAT_CONFIDENCE_MARGIN,
+    DEFAULT_TAIL_SILENCE_SEC,
+    MIN_WORD_DUR,
+    SAMPLE_RATE,
+)
+from .engines import get_engine
 from .features import compute_fbank_features
-from .onnx_model import make_onnx_session, run_streaming_log_probs
 from .reference import build_combined_reference
 from .repeats import detect_and_fix_repeats, extract_word_frame_spans
 from .srt import build_rich_records
 from .tokenizer import load_tokens
-from .viterbi import ctc_forced_align, frame_spans_from_path
+from .trellis import frame_spans_from_path
 
 
 def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
-                 anomaly_low_ratio: float = 0.15, anomaly_high_ratio: float = 3.0,
-                 ayah_final_high_ratio_mult: float = 1.5, repeat_confidence_margin: float = 1.0,
+                 device: str = "cpu",
+                 anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
+                 anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
+                 ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
+                 repeat_confidence_margin: float = DEFAULT_REPEAT_CONFIDENCE_MARGIN,
                  max_repeat_window_words: int | None = DEFAULT_MAX_REPEAT_WINDOW_WORDS,
-                 tail_silence_sec: float = 0.3, verbose: bool = True) -> list[dict]:
+                 tail_silence_sec: float = DEFAULT_TAIL_SILENCE_SEC, verbose: bool = True) -> list[dict]:
     """Run the full forced-alignment + repeat-detection pipeline for one
     surah's audio and return its word-level cue records, sorted by start
     time -- see `srt.build_rich_records` for the exact record shape (word/
     timing/repeat flag/confidence signals/letter-phoneme-tajweed tier).
 
-    Keyword-arg defaults match the current CLI's argparse defaults exactly
-    (see cli.py's --anomaly-low-ratio, --anomaly-high-ratio,
+    `device` selects the forced-alignment execution engine (`"cpu"`
+    (default) or `"cuda"` -- see `engines/__init__.py`); both engines
+    implement the identical `(ext, path, margins)` contract, so every step
+    after `[3/6]` below is engine-agnostic.
+
+    Keyword-arg defaults are the `constants.py` DEFAULT_* values cli.py's
+    argparse defaults (--anomaly-low-ratio, --anomaly-high-ratio,
     --ayah-final-high-ratio-mult, --repeat-confidence-margin,
-    --max-repeat-window-words, --tail-silence-sec).
+    --max-repeat-window-words, --tail-silence-sec) also read from, so the
+    two can never silently drift apart.
     """
     def log(msg):
         if verbose:
@@ -167,13 +185,13 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     log(f"      {len(samples) / SAMPLE_RATE:.1f}s of audio")
     feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
 
-    log("[3/6] Running raw-ONNX streaming Zipformer2-CTC (cache-threaded chunks)...")
-    sess = make_onnx_session(model_path)
-    log_probs, seconds_per_frame = run_streaming_log_probs(sess, feats)
+    log(f"[3/6] Running streaming Zipformer2-CTC on the {device!r} engine (cache-threaded chunks)...")
+    engine = get_engine(device)(model_path)
+    log_probs, seconds_per_frame = engine.run_inference(feats)
     log(f"      log_probs shape {log_probs.shape}, {seconds_per_frame * 1000:.1f}ms/output-frame")
 
-    log("[4/6] CTC forced-alignment Viterbi over the WHOLE surah at once...")
-    ext, path, margins = ctc_forced_align(log_probs, combined_token_ids, blank_id)
+    log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
+    ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
     if ext is None:
         raise RuntimeError(
             "forced alignment failed: audio too short for this surah's reference "
@@ -186,7 +204,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     log("[5/6] Detecting + locally re-aligning repeats...")
     min_word_dur_frames = MIN_WORD_DUR / seconds_per_frame
     cues = detect_and_fix_repeats(
-        cues, log_probs, combined_token_ids, blank_id, ext, path,
+        engine, cues, log_probs, combined_token_ids, blank_id, ext, path,
         anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,
         ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
         confidence_margin=repeat_confidence_margin,

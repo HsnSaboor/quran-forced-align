@@ -8,10 +8,44 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "onnxruntime==1.28.0",
     "kaldi-native-fbank==1.22.3",
     "quran-transcript==0.5.2",
     "numpy==2.5.1",
+]
+
+# `onnxruntime` (CPU) and `onnxruntime-gpu` (CUDA) both provide the same
+# top-level `onnxruntime` Python module and CANNOT be installed together
+# in one environment (whichever installs second silently shadows the
+# other's native libraries) -- confirmed empirically: installing
+# `onnxruntime-gpu` alongside plain `onnxruntime` is a documented
+# ONNX Runtime footgun, not a version-pinning choice this project can
+# route around. Every installation therefore picks EXACTLY ONE of the two
+# extras below, matching the `--device cpu`/`--device cuda` choice made at
+# runtime (see cli.py/batch_cli.py's --device flag and engines/__init__.py):
+#
+#   uv sync --extra cpu    # default engine -- CPU-only machines, laptops
+#   uv sync --extra cuda   # GPU batch runs -- Colab, any CUDA 12.x host
+[project.optional-dependencies]
+cpu = [
+    "onnxruntime==1.28.0",
+]
+# Verified empirically on a real Colab T4 GPU session (CUDA 12.8 driver,
+# `onnxruntime-gpu` 1.27+ ships a CUDA-13.0-linked build by default and
+# SILENTLY falls back to CPUExecutionProvider on a CUDA-12.x host with no
+# error raised -- confirmed via `sess.get_providers()` returning only
+# `['CPUExecutionProvider']` despite `CUDAExecutionProvider` being
+# requested and listed in `get_available_providers()`). `onnxruntime-gpu`
+# 1.20.2 is the latest release still linked against CUDA 12.x and was
+# confirmed to correctly select CUDAExecutionProvider on that same
+# session. Pin torch/torchaudio to the same CUDA 12.8 wheel line so both
+# libraries' bundled CUDA/cuDNN runtimes agree (torchaudio's
+# `forced_align` CUDA kernel and onnxruntime's CUDA EP each carry their
+# own CUDA runtime; mismatched major versions is a common source of
+# silent GPU-to-CPU fallback or a hard crash at import time).
+cuda = [
+    "onnxruntime-gpu==1.20.2",
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
 ]
 
 [project.scripts]
@@ -19,9 +53,33 @@ quran-forced-align = "quran_forced_align.cli:main"
 quran-forced-align-batch = "quran_forced_align.batch_cli:main"
 
 [dependency-groups]
+# Not pulled in automatically by `uv sync --extra cpu`/`--extra cuda` alone
+# (dependency-groups and optional-dependencies are separate installation
+# channels) -- run tests with `uv sync --extra cpu --group dev` (or
+# `--extra cuda --group dev` on a GPU machine) to get both the engine's
+# runtime deps and pytest in one environment.
 dev = [
     "pytest",
 ]
+
+# torch/torchaudio's default PyPI wheels bundle their OWN CUDA 13.x
+# runtime (see this file's `cuda` extra comment) -- pinning uv's resolver
+# to PyTorch's CUDA-12.8 wheel index for these two packages specifically
+# is what makes `uv sync --extra cuda` reproducibly install the CUDA-12.x
+# build that actually matches `onnxruntime-gpu==1.20.2`'s CUDA-12.x
+# requirement, instead of silently resolving the newer CUDA-13-linked
+# default. On a Colab GPU runtime this is a no-op in practice (Colab
+# already preinstalls a matching torch+cu128 build), but a fresh
+# non-Colab CUDA-12.x machine needs this pin to avoid the exact silent
+# CPU-fallback failure mode this file documents above.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", extra = "cuda" }]
+torchaudio = [{ index = "pytorch-cu128", extra = "cuda" }]
 
 [build-system]
 requires = ["uv_build>=0.10.3,<0.11.0"]

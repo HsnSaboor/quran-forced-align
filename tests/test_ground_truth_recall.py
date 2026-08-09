@@ -30,12 +30,12 @@ import numpy as np
 import pytest
 
 from quran_forced_align.constants import MIN_WORD_DUR
+from quran_forced_align.engines.cpu import CPUEngine
 from quran_forced_align.features import compute_fbank_features
-from quran_forced_align.onnx_model import make_onnx_session, run_streaming_log_probs
 from quran_forced_align.repeats import detect_and_fix_repeats, extract_word_frame_spans
 from quran_forced_align.srt import cues_to_tuples
 from quran_forced_align.tokenizer import load_tokens, tokenize_with_char_starts
-from quran_forced_align.viterbi import ctc_forced_align, frame_spans_from_path
+from quran_forced_align.trellis import frame_spans_from_path
 
 from .conftest import FIXTURES_DIR, MODEL_PATH, TOKENS_PATH
 
@@ -110,10 +110,10 @@ def _run_one(audio_path, ref_words, tok2id, max_token_len,
     samples = _load_wav16k_mono(audio_path)
     feats = compute_fbank_features(samples, tail_silence_sec=0.3)
 
-    sess = make_onnx_session(MODEL_PATH)
-    log_probs, seconds_per_frame = run_streaming_log_probs(sess, feats)
+    engine = CPUEngine(MODEL_PATH)
+    log_probs, seconds_per_frame = engine.run_inference(feats)
 
-    ext, path, _margins = ctc_forced_align(log_probs, combined_token_ids, blank_id=tok2id["<blank>"])
+    ext, path, _margins = engine.forced_align(log_probs, combined_token_ids, tok2id["<blank>"])
     assert ext is not None, "forced alignment failed (audio too short for reference)"
 
     first_seen, last_seen = frame_spans_from_path(path, len(ext))
@@ -121,7 +121,7 @@ def _run_one(audio_path, ref_words, tok2id, max_token_len,
 
     min_word_dur_frames = MIN_WORD_DUR / seconds_per_frame
     cues2 = detect_and_fix_repeats(
-        cues, log_probs, combined_token_ids, tok2id["<blank>"], ext, path,
+        engine, cues, log_probs, combined_token_ids, tok2id["<blank>"], ext, path,
         anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,
         ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
         confidence_margin=confidence_margin,

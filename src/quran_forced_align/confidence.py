@@ -19,7 +19,7 @@ fully resident in memory after `viterbi.ctc_forced_align` returns.
 """
 import numpy as np
 
-from .viterbi import avg_logprob_along_path
+from .trellis import avg_logprob_along_path
 
 
 def per_word_min_margin(margins, start_frame, end_frame):

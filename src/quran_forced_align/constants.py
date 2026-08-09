@@ -19,6 +19,17 @@ MOSHAF = MoshafAttributes(
 FRAME_SHIFT_SEC = 0.01  # 10ms fbank hop -- matches build_surah_srt / model export convention
 MIN_WORD_DUR = 0.15     # floor for degenerate (near-zero-length) word cues, matches build_surah_srt
 
+# Default repeat-detection tuning values, shared by pipeline.align_surah's keyword defaults AND
+# cli.py/batch_cli.py's --anomaly-low-ratio/--anomaly-high-ratio/--ayah-final-high-ratio-mult/
+# --repeat-confidence-margin argparse defaults, so the two can never silently drift apart (a
+# single edit to one used to be able to leave the other stale -- see detect_and_fix_repeats's
+# docstring for what each threshold controls).
+DEFAULT_ANOMALY_LOW_RATIO = 0.15
+DEFAULT_ANOMALY_HIGH_RATIO = 3.0
+DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT = 1.5
+DEFAULT_REPEAT_CONFIDENCE_MARGIN = 1.0
+DEFAULT_TAIL_SILENCE_SEC = 0.3
+
 # Optional HARD SAFETY CAP (in words) on the repeated-phrase K-search in detect_and_fix_repeats,
 # on top of the natural (ayah-boundary) bound described there. None means "no extra cap" -- the
 # search is bounded by how many words remain in the current ayah, which is the correct

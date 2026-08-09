@@ -18,8 +18,20 @@ architectural rationale.
 ## Install
 
 ```bash
-uv sync
+uv sync --extra cpu     # default execution engine -- laptops, CI, any CPU-only machine
 ```
+
+or, on a CUDA-capable GPU machine (e.g. Colab) for the batch/multi-reciter
+workload the `cuda` engine targets:
+
+```bash
+uv sync --extra cuda
+```
+
+`cpu` and `cuda` are mutually exclusive (`onnxruntime`/`onnxruntime-gpu`
+provide the same top-level module and cannot coexist in one environment --
+see `pyproject.toml`'s comments) -- install exactly one, matching whichever
+`--device` you plan to run with.
 
 The bundled acoustic model (`model/zipformer_p_arabic_v2.int8.onnx`, ~73MB,
 gitignored) must be present on disk for any alignment to run -- see "Model
@@ -39,6 +51,53 @@ Writes `srt_output/001.srt` and `srt_output/001.json`. Tuning flags
 `--ayah-final-high-ratio-mult`, `--repeat-confidence-margin`,
 `--max-repeat-window-words`, `--tail-silence-sec`) control the
 repeat-detection sensitivity -- see `quran-forced-align --help`.
+
+### GPU execution (`--device cuda`)
+
+```bash
+uv run quran-forced-align --surah 2 --audio audio/002.mp3 --out srt_output/002.srt --device cuda
+```
+
+Runs the acoustic model on onnxruntime's `CUDAExecutionProvider` and CTC
+forced alignment via `torchaudio.functional.forced_align`'s compiled CUDA
+kernel, instead of the default CPU engine. Requires `uv sync --extra cuda`
+and a CUDA-capable GPU. Output is byte-identical to the CPU engine's
+`word`/`start`/`end`/`sura`/`aya`/`is_repeat`/`letters` fields (both engines
+align against the exact same reference and produce the exact same
+monotonic best-path frame boundaries); `avg_logprob`/`min_decision_margin`
+differ slightly between engines by design (each engine's margin is derived
+from a different, engine-specific quantity -- see
+`engines/cuda.py`'s module docstring) but both are internally consistent,
+deterministic across repeated runs on the same engine, and follow the same
+"more negative/smaller = less confident" convention.
+
+**Why GPU helps this workload, but only past a certain scale**: the CPU
+engine's onnxruntime session and Viterbi DP are deliberately
+single-threaded per surah (see "Determinism" below), so a single surah's
+wall-clock time is dominated by per-frame latency, not throughput -- a GPU
+does not meaningfully speed up ONE surah's inference (verified empirically:
+onnxruntime's CUDA EP is only ~2x faster than CPU per streaming chunk, not
+an order of magnitude, since each chunk is tiny). The real GPU win is at
+Al-Baqarah-sized (and larger, i.e. many-surahs-in-parallel) forced
+alignment: `torchaudio.functional.forced_align` completed the Al-Baqarah-
+scale trellis (~175,000 frames x ~24,548 reference tokens) in ~15 seconds
+using ~340MB of GPU memory in verification testing, without needing the CPU
+engine's checkpointed Hirschberg-style memory optimization at all (see
+`viterbi.py`'s module docstring for why that optimization exists on CPU).
+For the batch workload this engine targets (100+ reciters x 114 surahs),
+run many surahs' CUDA-engine jobs back-to-back or across worker processes
+sharing the GPU (see `quran-forced-align-batch --device cuda
+--max-workers`) rather than expecting single-surah GPU speedup.
+
+The default `--model` (the bundled int8-quantized ONNX) works correctly on
+both engines -- verified empirically: int8-on-CUDA's greedy-decode argmax
+matches int8-on-CPU's for every frame on a real streaming inference run,
+and int8-on-CUDA is itself deterministic across repeated runs. If you have
+the fp32 ONNX export (`zipformer_p_arabic_v2.onnx`, not bundled in this
+repo -- see the model's Hugging Face page) it's numerically closer to the
+original PyTorch model, since the int8 quantization was calibrated for
+CPU inference; pass `--model path/to/zipformer_p_arabic_v2.onnx` with
+`--device cuda` if you want that extra fidelity.
 
 ### Output format
 
@@ -102,6 +161,21 @@ e.g. `067.mp3`). Each surah is aligned in its own OS process
 pinned single-threaded for determinism, so real CPU-core parallelism comes
 from separate processes, not GIL-contending threads). One surah failing
 does not abort the batch; a summary table is printed at the end.
+
+Add `--device cuda` (requires `uv sync --extra cuda`) to run every worker
+process's forced alignment on the GPU engine instead. Each worker process
+opens its own CUDA context on the same GPU, so size `--max-workers` to the
+GPU's VRAM budget for this workload, not `os.cpu_count()` (this flag's
+default, tuned for the CPU engine):
+
+```bash
+uv run quran-forced-align-batch \
+  --surahs 1-114 \
+  --audio-dir audio \
+  --out-dir srt_output \
+  --device cuda \
+  --max-workers 2
+```
 
 ## Web player
 
@@ -247,6 +321,7 @@ context.
 ## Tests
 
 ```bash
+uv sync --extra cpu --group dev   # pytest lives in the separate `dev` dependency group
 uv run pytest -v
 ```
 

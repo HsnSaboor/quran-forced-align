@@ -33,6 +33,7 @@ def parse_surah_list(spec: str) -> list[int]:
 
 
 def _align_one_surah(surah: int, audio_dir: str, out_dir: str, model_path: str, tokens_path: str,
+                      device: str,
                       anomaly_low_ratio: float, anomaly_high_ratio: float,
                       ayah_final_high_ratio_mult: float, repeat_confidence_margin: float,
                       max_repeat_window_words: int | None, tail_silence_sec: float) -> dict:
@@ -48,6 +49,7 @@ def _align_one_surah(surah: int, audio_dir: str, out_dir: str, model_path: str, 
         surah, audio_path,
         model_path=model_path,
         tokens_path=tokens_path,
+        device=device,
         anomaly_low_ratio=anomaly_low_ratio,
         anomaly_high_ratio=anomaly_high_ratio,
         ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
@@ -80,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--model", default="model/zipformer_p_arabic_v2.int8.onnx")
     ap.add_argument("--tokens", default="model/tokens.txt")
+    ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu",
+                     help="forced-alignment execution engine for every worker process (see "
+                          "cli.py's --device for the full description). With --device cuda, "
+                          "every worker process opens its own CUDA context on the same GPU, so "
+                          "--max-workers should be sized to the GPU's VRAM budget, not "
+                          "os.cpu_count() (this flag's default) -- see README for guidance.")
     ap.add_argument("--max-workers", type=int, default=os.cpu_count())
     add_tuning_args(ap)
     return ap
@@ -98,6 +106,7 @@ def main():
         future_to_surah = {
             pool.submit(
                 _align_one_surah, surah, args.audio_dir, args.out_dir, args.model, args.tokens,
+                args.device,
                 args.anomaly_low_ratio, args.anomaly_high_ratio, args.ayah_final_high_ratio_mult,
                 args.repeat_confidence_margin, args.max_repeat_window_words, args.tail_silence_sec,
             ): surah

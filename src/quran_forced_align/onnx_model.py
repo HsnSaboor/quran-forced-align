@@ -13,17 +13,29 @@ import onnxruntime as ort
 from .constants import FRAME_SHIFT_SEC
 
 
-def make_onnx_session(model_path):
+def make_onnx_session(model_path, providers=("CPUExecutionProvider",)):
     """Deterministic onnxruntime session: single-threaded, sequential
     execution. Rules out any thread-race nondeterminism in parallelized
     reduction ops (e.g. matmul/layernorm) across repeated runs -- required
     since the user explicitly needs bit-identical output on every run.
+
+    `providers` defaults to CPU-only (this function's original,
+    unconditional behaviour, unchanged for every existing caller). Passing
+    `["CUDAExecutionProvider", "CPUExecutionProvider"]` (see
+    `engines.cuda.CUDAEngine`) runs the same single-threaded/sequential
+    settings on GPU instead -- verified empirically (against a real T4 GPU
+    session) to still produce bit-identical repeated-run output, since
+    onnxruntime's CUDA EP has no thread-count knob of its own to pin here
+    (GPU kernels are launched from ORT's single CPU-side control thread
+    regardless of `intra_op_num_threads`; determinism there comes from the
+    CUDA kernels themselves always reducing in the same fixed order for a
+    fixed input, not from a CPU thread-count setting).
     """
     so = ort.SessionOptions()
     so.intra_op_num_threads = 1
     so.inter_op_num_threads = 1
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    return ort.InferenceSession(model_path, sess_options=so, providers=["CPUExecutionProvider"])
+    return ort.InferenceSession(model_path, sess_options=so, providers=list(providers))
 
 
 def _zero_state_for_inputs(sess_inputs):
@@ -45,11 +57,25 @@ def _zero_state_for_inputs(sess_inputs):
     return state
 
 
-def run_streaming_log_probs(sess, feats):
+def run_streaming_log_probs(sess, feats, output_dtype=np.float64):
     """Feed 80-dim fbank features through the streaming Zipformer2-CTC ONNX
     graph chunk-by-chunk, threading the 96 cache tensors + embed_states +
     processed_lens between calls, and concatenate the per-chunk log_probs
     outputs into one [T_total, 251] matrix for the whole utterance.
+
+    `output_dtype` defaults to float64 -- the CPU engine's numpy Viterbi
+    DP (`viterbi/dp.py`) accumulates in float64 for its own numerical
+    reasons, and this function's original (pre-multi-engine) behavior was
+    to always upcast here so every existing caller kept getting float64
+    with zero code change. The CUDA engine (`engines/cuda.py`) passes
+    `output_dtype=np.float32` explicitly: it immediately re-casts its
+    input tensor to float32 anyway for `torchaudio.functional.forced_align`
+    (which only accepts float32 log-probabilities), so upcasting to
+    float64 here first would only add an avoidable full-matrix
+    float32->float64->float32 round trip -- confirmed as a real,
+    avoidable ~2x memory/CPU waste at Al-Baqarah scale in code review, with
+    zero benefit since the float64 precision is discarded again
+    immediately.
 
     Chunk geometry is read from the model's own ONNX metadata
     (decode_chunk_len, T) rather than hardcoded, confirmed empirically to
@@ -139,7 +165,7 @@ def run_streaming_log_probs(sess, feats):
             feed[name] = out[out_idx]
         ptr += offset
 
-    log_probs = log_probs.astype(np.float64)
+    log_probs = log_probs.astype(output_dtype)
     subsample_factor = offset / frames_per_chunk  # empirically 48/12 = 4
     seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
     return log_probs, seconds_per_output_frame
