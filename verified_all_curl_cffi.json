@@ -1,0 +1,1587 @@
+{
+  "verified": [
+    {
+      "slug": "abdallah-kamel",
+      "reciter_id": 318,
+      "collection_id": 177,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdel-mohsen-al-obeikan",
+      "reciter_id": 234,
+      "collection_id": 139,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdel-moneim-abdel-mobdi",
+      "reciter_id": 313,
+      "collection_id": 172,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdelali-anoun",
+      "reciter_id": 422,
+      "collection_id": 461,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdelbasset-abou-el-azm",
+      "reciter_id": 442,
+      "collection_id": 484,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdelhamed-hssain",
+      "reciter_id": 359,
+      "collection_id": 214,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdelkarim-edghouch",
+      "reciter_id": 766,
+      "collection_id": 3331,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdelmoujib-benkirane",
+      "reciter_id": 310,
+      "collection_id": 169,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-aziz-al-ahmed",
+      "reciter_id": 29,
+      "collection_id": 26,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-aziz-alqori-abo-ismail",
+      "reciter_id": 726,
+      "collection_id": 3267,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-aziz-nada",
+      "reciter_id": 513,
+      "collection_id": 558,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-aziz-okocha",
+      "reciter_id": 516,
+      "collection_id": 561,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-bari-ath-thobaity",
+      "reciter_id": 38,
+      "collection_id": 35,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-bari-mohammed",
+      "reciter_id": 82,
+      "collection_id": 76,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-rahman-al-sudais",
+      "reciter_id": 12,
+      "collection_id": 9,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-rashid-ali-sufi",
+      "reciter_id": 26,
+      "collection_id": 23,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdul-wadud-haneef",
+      "reciter_id": 30,
+      "collection_id": 27,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdulaziz-az-zahrani",
+      "reciter_id": 227,
+      "collection_id": 132,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdulbasit-abdusamad",
+      "reciter_id": 2,
+      "collection_id": 237,
+      "unique_surahs": 114,
+      "total_recs": 228
+    },
+    {
+      "slug": "abdulhadi-kanakeri",
+      "reciter_id": 53,
+      "collection_id": 47,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdullah-awad-al-juhani",
+      "reciter_id": 93,
+      "collection_id": 85,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdullah-ghailan",
+      "reciter_id": 231,
+      "collection_id": 3333,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdullah-ibn-ali-basfar",
+      "reciter_id": 6,
+      "collection_id": 6,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdullah-matrood",
+      "reciter_id": 5,
+      "collection_id": 5,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdullah-taha-serbil",
+      "reciter_id": 481,
+      "collection_id": 524,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdulmohsen-al-harthy",
+      "reciter_id": 233,
+      "collection_id": 138,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdulmohsen-al-qasim",
+      "reciter_id": 45,
+      "collection_id": 39,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdulrahman-ibn-muhammad-al-garithy",
+      "reciter_id": 495,
+      "collection_id": 540,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdulrahman-jamal-aloosi",
+      "reciter_id": 360,
+      "collection_id": 215,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abdur-razaq-bin-abtan-al-dulaimi",
+      "reciter_id": 324,
+      "collection_id": 183,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abu-abdullah-mounir-el-tounsi",
+      "reciter_id": 351,
+      "collection_id": 205,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abu-abdullah-munir-el-tounsi",
+      "reciter_id": 404,
+      "collection_id": 442,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "abu-bakr-al-shatri",
+      "reciter_id": 34,
+      "collection_id": 31,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "adel-al-kalbani",
+      "reciter_id": 44,
+      "collection_id": 38,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "adil-ben-salem-al-kalbani",
+      "reciter_id": 693,
+      "collection_id": 3234,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahed-bashir-zino",
+      "reciter_id": 705,
+      "collection_id": 3246,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmad-al-hawashy",
+      "reciter_id": 71,
+      "collection_id": 65,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmad-khader-al-tarabulsi",
+      "reciter_id": 202,
+      "collection_id": 107,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmad-khalil-shaheen",
+      "reciter_id": 563,
+      "collection_id": 623,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmad-mohammad-deeban",
+      "reciter_id": 529,
+      "collection_id": 574,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmad-mohammed-al-jabali",
+      "reciter_id": 439,
+      "collection_id": 481,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmad-saber-al-aayidi",
+      "reciter_id": 708,
+      "collection_id": 3249,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmad-sayid-hashim",
+      "reciter_id": 562,
+      "collection_id": 622,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-ahmed-othman-alquariu",
+      "reciter_id": 689,
+      "collection_id": 3230,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-al-ajmi",
+      "reciter_id": 13,
+      "collection_id": 10,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-al-mesbahi",
+      "reciter_id": 105,
+      "collection_id": 95,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-amer",
+      "reciter_id": 203,
+      "collection_id": 108,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-el-raziki",
+      "reciter_id": 767,
+      "collection_id": 3336,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-el-raziki",
+      "reciter_id": 768,
+      "collection_id": 3337,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-khalil-shaheen",
+      "reciter_id": 356,
+      "collection_id": 210,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-mohamed-salama",
+      "reciter_id": 367,
+      "collection_id": 398,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-nuinaa",
+      "reciter_id": 75,
+      "collection_id": 69,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ahmed-saber",
+      "reciter_id": 51,
+      "collection_id": 45,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "aid-hassan-abu-aachra",
+      "reciter_id": 113,
+      "collection_id": 101,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "akram-al-aalakmi",
+      "reciter_id": 80,
+      "collection_id": 74,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "al-ameen-muhammad-qanyouh",
+      "reciter_id": 597,
+      "collection_id": 3339,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "al-ashry-omran",
+      "reciter_id": 108,
+      "collection_id": 97,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "al-husayni-al-azazi",
+      "reciter_id": 98,
+      "collection_id": 298,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "al-naje-wald-belal",
+      "reciter_id": 769,
+      "collection_id": 3338,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "alfateh-muhammad-zubair",
+      "reciter_id": 210,
+      "collection_id": 115,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ali-al-huthaify",
+      "reciter_id": 19,
+      "collection_id": 16,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ali-barrak",
+      "reciter_id": 414,
+      "collection_id": 452,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ali-hajjaj-souissi",
+      "reciter_id": 78,
+      "collection_id": 72,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ali-jaber",
+      "reciter_id": 28,
+      "collection_id": 25,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "alzain-mohamed-ahmed",
+      "reciter_id": 76,
+      "collection_id": 70,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ashraf-abdo-darwish",
+      "reciter_id": 704,
+      "collection_id": 3245,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ayman-ahmed-aldeeb",
+      "reciter_id": 446,
+      "collection_id": 488,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ayman-ayad",
+      "reciter_id": 692,
+      "collection_id": 3233,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "aziz-alili",
+      "reciter_id": 507,
+      "collection_id": 552,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "bandar-balila",
+      "reciter_id": 358,
+      "collection_id": 412,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "bassel-abdul-rahman-raoui",
+      "reciter_id": 110,
+      "collection_id": 98,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "daoud-ayad-hamza",
+      "reciter_id": 687,
+      "collection_id": 3228,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "emad-al-mansary",
+      "reciter_id": 331,
+      "collection_id": 189,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ezzedine-amarna",
+      "reciter_id": 483,
+      "collection_id": 526,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "faisal-bin-mohammad-al-rasheed",
+      "reciter_id": 713,
+      "collection_id": 3254,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "fares-abbad",
+      "reciter_id": 18,
+      "collection_id": 15,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "fatih-collak",
+      "reciter_id": 482,
+      "collection_id": 3363,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "fouad-al-khamiri",
+      "reciter_id": 339,
+      "collection_id": 196,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ghassan-mahmoud-al-shurbaji",
+      "reciter_id": 712,
+      "collection_id": 3253,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hafez-ishak-danish",
+      "reciter_id": 418,
+      "collection_id": 456,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hamdy-saad",
+      "reciter_id": 703,
+      "collection_id": 3244,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hamza-takarli-al-jazairi",
+      "reciter_id": 710,
+      "collection_id": 3251,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hani-ar-rifai",
+      "reciter_id": 86,
+      "collection_id": 79,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hany-eid",
+      "reciter_id": 514,
+      "collection_id": 559,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hasan-ibraheem-hashem",
+      "reciter_id": 497,
+      "collection_id": 542,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hassan-bin-muhammad-bin-yahya-al-daghriri",
+      "reciter_id": 486,
+      "collection_id": 529,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hassan-saleh",
+      "reciter_id": 111,
+      "collection_id": 99,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hesham-abdelbary",
+      "reciter_id": 328,
+      "collection_id": 186,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "hossam-mohammad-al-agawy",
+      "reciter_id": 487,
+      "collection_id": 530,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "htlan-ben-ali-al-hatlan",
+      "reciter_id": 764,
+      "collection_id": 3326,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ibrahim-al-akhdar",
+      "reciter_id": 16,
+      "collection_id": 13,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ibrahim-al-dossari",
+      "reciter_id": 206,
+      "collection_id": 111,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ibrahim-aljormy",
+      "reciter_id": 395,
+      "collection_id": 431,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ibrahim-kishidan",
+      "reciter_id": 503,
+      "collection_id": 548,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ibrahim-saqr-al-zaim",
+      "reciter_id": 498,
+      "collection_id": 543,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ilhan-tok",
+      "reciter_id": 107,
+      "collection_id": 96,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "imad-zuhair-hafez",
+      "reciter_id": 24,
+      "collection_id": 21,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "ismail-lunt",
+      "reciter_id": 493,
+      "collection_id": 538,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "jamaan-alosaimi",
+      "reciter_id": 212,
+      "collection_id": 117,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "jamal-shaker-abdullah",
+      "reciter_id": 43,
+      "collection_id": 37,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "jawhar-el-gardelli",
+      "reciter_id": 505,
+      "collection_id": 550,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "jazza-alswaileh",
+      "reciter_id": 305,
+      "collection_id": 165,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "kamel-el-beialy",
+      "reciter_id": 489,
+      "collection_id": 533,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "kamel-jaballah-al-fashni",
+      "reciter_id": 441,
+      "collection_id": 483,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "karim-mansouri",
+      "reciter_id": 397,
+      "collection_id": 433,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "khaled-al-qahtani",
+      "reciter_id": 46,
+      "collection_id": 40,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "khaled-barakat",
+      "reciter_id": 491,
+      "collection_id": 536,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "khalid-abdulkafi",
+      "reciter_id": 69,
+      "collection_id": 63,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "khalid-abu-bakr-bawazeer",
+      "reciter_id": 698,
+      "collection_id": 3239,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "khalid-al-jalil",
+      "reciter_id": 307,
+      "collection_id": 280,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "khalid-al-mohanna",
+      "reciter_id": 216,
+      "collection_id": 121,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "khalifa-al-tunaiji",
+      "reciter_id": 73,
+      "collection_id": 67,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "laayoun-el-kouchi",
+      "reciter_id": 22,
+      "collection_id": 19,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "le-saint-coran-traduit-en-francais",
+      "reciter_id": 99,
+      "collection_id": 90,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "magdy-salem",
+      "reciter_id": 435,
+      "collection_id": 474,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "maher-al-mueaqly",
+      "reciter_id": 33,
+      "collection_id": 30,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "maher-shakhashiro",
+      "reciter_id": 239,
+      "collection_id": 144,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mahmood-al-rifai",
+      "reciter_id": 246,
+      "collection_id": 151,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mahmoud-abdulhakam",
+      "reciter_id": 564,
+      "collection_id": 628,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mahmoud-ali-al-banna",
+      "reciter_id": 25,
+      "collection_id": 22,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mahmoud-ali-radi",
+      "reciter_id": 702,
+      "collection_id": 3243,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mahmoud-khalil-al-hussary",
+      "reciter_id": 27,
+      "collection_id": 24,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mahmoud-saad-darouich",
+      "reciter_id": 115,
+      "collection_id": 103,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mahmoud-sayed-eltayeb",
+      "reciter_id": 333,
+      "collection_id": 191,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "majed-farouk",
+      "reciter_id": 349,
+      "collection_id": 203,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mal-allah-abdul-rahman-al-jaber",
+      "reciter_id": 714,
+      "collection_id": 3255,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mansour-el-wahrani-aljazaery",
+      "reciter_id": 504,
+      "collection_id": 549,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "miqdam-al-hadari",
+      "reciter_id": 449,
+      "collection_id": 491,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "miqdam-el-hadary",
+      "reciter_id": 357,
+      "collection_id": 211,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mishary-rashid-alafasy",
+      "reciter_id": 1,
+      "collection_id": 1,
+      "unique_surahs": 114,
+      "total_recs": 115
+    },
+    {
+      "slug": "mohamed-abdel-hakim-saad-al-abdullah",
+      "reciter_id": 96,
+      "collection_id": 87,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-abdelaziz",
+      "reciter_id": 114,
+      "collection_id": 102,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-ait-el-hassan-ouali",
+      "reciter_id": 425,
+      "collection_id": 465,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-al-muqatil-al-ibrahimi",
+      "reciter_id": 501,
+      "collection_id": 546,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-awad-al-harbawi",
+      "reciter_id": 432,
+      "collection_id": 469,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-chahboun",
+      "reciter_id": 376,
+      "collection_id": 408,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-el-iraoui",
+      "reciter_id": 240,
+      "collection_id": 145,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-el-kantaoui",
+      "reciter_id": 88,
+      "collection_id": 81,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-maabad",
+      "reciter_id": 329,
+      "collection_id": 187,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-osman-khan",
+      "reciter_id": 245,
+      "collection_id": 150,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-saad-ibrahim",
+      "reciter_id": 695,
+      "collection_id": 3236,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-safa",
+      "reciter_id": 427,
+      "collection_id": 466,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-sayed",
+      "reciter_id": 428,
+      "collection_id": 467,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-shaaban-abu-qarn",
+      "reciter_id": 319,
+      "collection_id": 178,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-siddiq-el-minshawi",
+      "reciter_id": 3,
+      "collection_id": 3,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohamed-tablawi",
+      "reciter_id": 31,
+      "collection_id": 28,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohammad-al-radi-ould-amelih",
+      "reciter_id": 707,
+      "collection_id": 3248,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohammad-mahmoud-al-khoja",
+      "reciter_id": 494,
+      "collection_id": 539,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohammad-nizar-morish-al-dimashqi",
+      "reciter_id": 725,
+      "collection_id": 3266,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohammad-omar-el-ganayni",
+      "reciter_id": 490,
+      "collection_id": 535,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohammad-rachad-al-shareef",
+      "reciter_id": 112,
+      "collection_id": 100,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohammad-saleh-hassan-elhouderi",
+      "reciter_id": 485,
+      "collection_id": 528,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mohy-el-din-al-kourdi",
+      "reciter_id": 338,
+      "collection_id": 195,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muftah-alsaltany",
+      "reciter_id": 259,
+      "collection_id": 164,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhamad-abu-snina",
+      "reciter_id": 554,
+      "collection_id": 612,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-abdel-haleem-al-sabbagh",
+      "reciter_id": 450,
+      "collection_id": 492,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-abdulkareem",
+      "reciter_id": 50,
+      "collection_id": 44,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-ahmed-suhaim",
+      "reciter_id": 352,
+      "collection_id": 206,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-al-aalim-al-dokali",
+      "reciter_id": 209,
+      "collection_id": 114,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-al-luhaidan",
+      "reciter_id": 95,
+      "collection_id": 86,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-anwar-shahat",
+      "reciter_id": 327,
+      "collection_id": 185,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-ayyub",
+      "reciter_id": 14,
+      "collection_id": 11,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-jibreel",
+      "reciter_id": 59,
+      "collection_id": 53,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-said-khayat",
+      "reciter_id": 512,
+      "collection_id": 557,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "muhammad-saleh-alim-shah",
+      "reciter_id": 79,
+      "collection_id": 73,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "musa-bilal",
+      "reciter_id": 250,
+      "collection_id": 155,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mustafa-al-lahouni",
+      "reciter_id": 49,
+      "collection_id": 43,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mustafa-ismail",
+      "reciter_id": 48,
+      "collection_id": 42,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mustafa-raad-al-azzawi",
+      "reciter_id": 35,
+      "collection_id": 32,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "mustapha-gharbi",
+      "reciter_id": 101,
+      "collection_id": 91,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "nabil-ar-rifai",
+      "reciter_id": 36,
+      "collection_id": 33,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "nadir-al-qallawi",
+      "reciter_id": 765,
+      "collection_id": 3329,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "nasser-al-qatami",
+      "reciter_id": 61,
+      "collection_id": 265,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "neamah-al-hassan",
+      "reciter_id": 252,
+      "collection_id": 157,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "noor-al-deen-hazem-abu-ghazaleh",
+      "reciter_id": 696,
+      "collection_id": 3237,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "omar-al-kazabri",
+      "reciter_id": 15,
+      "collection_id": 12,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "osama-bin-ali-al-ghanim",
+      "reciter_id": 715,
+      "collection_id": 3256,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "osama-mohammad-juma",
+      "reciter_id": 711,
+      "collection_id": 3252,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "osama-sobhi-hussein",
+      "reciter_id": 694,
+      "collection_id": 3235,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "raafat-ghitany",
+      "reciter_id": 511,
+      "collection_id": 556,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "rachid-belalia",
+      "reciter_id": 219,
+      "collection_id": 212,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "rajab-zaky",
+      "reciter_id": 496,
+      "collection_id": 541,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "rami-ahmad-al-dyiss",
+      "reciter_id": 569,
+      "collection_id": 634,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "rashad-darwish",
+      "reciter_id": 448,
+      "collection_id": 490,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "riad-al-djazairi",
+      "reciter_id": 488,
+      "collection_id": 531,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "saad-el-ghamidi",
+      "reciter_id": 4,
+      "collection_id": 4,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "saber-abdul-hakam",
+      "reciter_id": 77,
+      "collection_id": 71,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "sadaqat-ali",
+      "reciter_id": 506,
+      "collection_id": 551,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "sahl-yasin",
+      "reciter_id": 20,
+      "collection_id": 17,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "said-al-shaalan",
+      "reciter_id": 317,
+      "collection_id": 176,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "salah-al-budair",
+      "reciter_id": 17,
+      "collection_id": 14,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "salah-al-hashem",
+      "reciter_id": 68,
+      "collection_id": 62,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "salah-bukhatir",
+      "reciter_id": 23,
+      "collection_id": 20,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "saleh-ahmad-saleh",
+      "reciter_id": 509,
+      "collection_id": 554,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "saleh-alsahood",
+      "reciter_id": 225,
+      "collection_id": 130,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "saleh-ben-salem-al-sahood",
+      "reciter_id": 336,
+      "collection_id": 3348,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "samir-belaachya",
+      "reciter_id": 65,
+      "collection_id": 59,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "saud-shuraim",
+      "reciter_id": 11,
+      "collection_id": 8,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "sayed-ahmad-abdel-sattar",
+      "reciter_id": 700,
+      "collection_id": 3241,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "sayed-ammar",
+      "reciter_id": 517,
+      "collection_id": 562,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "sayed-jumaa-salam",
+      "reciter_id": 437,
+      "collection_id": 477,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "sayed-ramadan",
+      "reciter_id": 81,
+      "collection_id": 75,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "shahriar-parhizgar",
+      "reciter_id": 398,
+      "collection_id": 434,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "shawqy-abd-al-sadeq-abdul-hamid",
+      "reciter_id": 484,
+      "collection_id": 527,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "shirazad-taher",
+      "reciter_id": 70,
+      "collection_id": 64,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "solomon-abdo-abou-qamar-el-domiaty",
+      "reciter_id": 444,
+      "collection_id": 486,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "taha-mohamed-abdulrahman-al-fahad",
+      "reciter_id": 382,
+      "collection_id": 416,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "taoufik-nouri",
+      "reciter_id": 426,
+      "collection_id": 621,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "tareq-abdulgani-daawob",
+      "reciter_id": 226,
+      "collection_id": 131,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "tariq-abdelbasset-abdessamad",
+      "reciter_id": 546,
+      "collection_id": 597,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "tawfeeq-as-sayegh",
+      "reciter_id": 32,
+      "collection_id": 29,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "tayyar-altikulac",
+      "reciter_id": 492,
+      "collection_id": 537,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "wadi-hamadi-al-yamani",
+      "reciter_id": 717,
+      "collection_id": 3258,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "waer-al-hadhoudi",
+      "reciter_id": 706,
+      "collection_id": 3247,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "waleed-fathy-bchata",
+      "reciter_id": 690,
+      "collection_id": 3231,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "waleed-idrees-al-maneese",
+      "reciter_id": 312,
+      "collection_id": 171,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yahya-ahmad-al-holili",
+      "reciter_id": 499,
+      "collection_id": 544,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yahya-hawwa",
+      "reciter_id": 74,
+      "collection_id": 68,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yassen-al-jazairi",
+      "reciter_id": 37,
+      "collection_id": 34,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yasser-abdullah",
+      "reciter_id": 502,
+      "collection_id": 547,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yasser-al-dosari",
+      "reciter_id": 52,
+      "collection_id": 46,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yasser-qureshi",
+      "reciter_id": 83,
+      "collection_id": 77,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yasser-salama",
+      "reciter_id": 314,
+      "collection_id": 173,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yasser-sarhan-eldeeb",
+      "reciter_id": 369,
+      "collection_id": 400,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yousef-alshoaey",
+      "reciter_id": 257,
+      "collection_id": 162,
+      "unique_surahs": 114,
+      "total_recs": 114
+    },
+    {
+      "slug": "yousef-bin-noah-ahmad",
+      "reciter_id": 258,
+      "collection_id": 163,
+      "unique_surahs": 114,
+      "total_recs": 114
+    }
+  ],
+  "count": 226
+}

@@ -1,0 +1,7 @@
+{
+  "filtered_count": 0,
+  "total_discovered": 83,
+  "instruction": "Only these have 114 .mp3 files present. Process only these.",
+  "filter_applied": "len(mp3 files) == 114",
+  "reciters": []
+}

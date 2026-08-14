@@ -1,0 +1,10 @@
+{
+  "verified": [
+    "abdul-rahman-al-sudais"
+  ],
+  "total": 100,
+  "method": "loadplayer-{id}-9 real browser",
+  "verified_logic_updated": "count unique sura_id in Recitation array, not total records",
+  "alafasy_status": "FULL (loadplayer-1-0: 947 records, 114 unique surahs)",
+  "sudais_status": "FULL (loadplayer-12-9: 114 records, 114 unique surahs)"
+}

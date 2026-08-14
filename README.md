@@ -254,10 +254,21 @@ uv run quran-forced-align-batch \
 See "GPU performance optimizations" above for `--cuda-batch-size` (batch
 multiple surahs together through one inference pass) and
 `--intra-surah-split` (split each surah's own inference across silence
-points) -- both work with `quran-forced-align-batch` too, but cannot be
-combined with each other in this release (pick whichever fits your
-workload: `--cuda-batch-size` for many similarly-sized surahs,
-`--intra-surah-split` for a handful of large ones).
+points) -- both work with `quran-forced-align-batch`, and CAN be combined
+for maximum GPU throughput: every surah in a `--cuda-batch-size` batch is
+ALSO split into its own silence-based segments, and every surah's every
+segment is flattened into one combined batched inference call:
+
+```bash
+uv run quran-forced-align-batch \
+  --surahs 1-114 \
+  --audio-dir audio \
+  --out-dir srt_output \
+  --device cuda \
+  --cuda-batch-size 8 \
+  --intra-surah-split \
+  --max-workers 2
+```
 
 ## Web player
 

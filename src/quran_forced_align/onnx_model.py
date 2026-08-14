@@ -553,6 +553,41 @@ def run_streaming_log_probs_intra_surah_split_cuda(sess, feats, split_chunk_indi
     offset = int(meta.get("decode_chunk_len", 48))
     segment = int(meta.get("T", 61))
 
+    segment_feats, seg_bounds = build_intra_surah_segments(
+        feats, split_chunk_indices, offset, segment, warmup_chunks
+    )
+
+    log_probs_list, seconds_per_output_frame = run_streaming_log_probs_batched_cuda_iobinding(
+        sess, segment_feats, device_id=device_id
+    )
+
+    log_probs = stitch_intra_surah_segments(log_probs_list, seg_bounds)
+    return log_probs, seconds_per_output_frame
+
+
+def build_intra_surah_segments(feats, split_chunk_indices, offset, segment,
+                                warmup_chunks=INTRA_SURAH_SPLIT_WARMUP_CHUNKS):
+    """Build the list of per-segment feature slices (each prefixed with
+    `INTRA_SURAH_SPLIT_WARMUP_CHUNKS`-worth of real preceding audio) for
+    ONE surah's `feats`, split at `split_chunk_indices` -- the shared core
+    of `run_streaming_log_probs_intra_surah_split_cuda`, factored out so
+    a caller batching MULTIPLE surahs' intra-surah segments together in
+    one giant cross-surah-and-cross-segment batch (see
+    `pipeline.align_surahs_batched`'s `intra_surah_split=True` combination)
+    can build every surah's own segment list independently, concatenate
+    them all into one flat list for a single
+    `run_streaming_log_probs_batched_cuda_iobinding` call, and later split
+    the returned per-segment results back out per surah before calling
+    `stitch_intra_surah_segments` on each surah's own slice.
+
+    Returns `(segment_feats, seg_bounds)`: `segment_feats` is a list of
+    per-segment feature arrays (in the same warm-up-prefixed form
+    `run_streaming_log_probs_batched_cuda_iobinding` expects); `seg_bounds`
+    is a list of `(seg_start, seg_end, warmup_start)` triples (chunk
+    indices), one per segment, that `stitch_intra_surah_segments` needs to
+    know which portion of each segment's OWN returned log_probs is the
+    "trusted" (post-warm-up) part to keep.
+    """
     T_raw, feat_dim = feats.shape
     n_chunks_total = 1 if T_raw <= segment else 1 + math.ceil((T_raw - segment) / offset)
     total_len_needed = segment + (n_chunks_total - 1) * offset
@@ -583,21 +618,30 @@ def run_streaming_log_probs_intra_surah_split_cuda(sess, feats, split_chunk_indi
     # output against the unsplit baseline end-to-end, not by the
     # log_probs-only unit-level checks alone).
     segment_feats = []
-    warmup_starts = []
+    seg_bounds = []
     for seg_start, seg_end in zip(seg_starts, seg_ends):
         warmup_start = max(0, seg_start - warmup_chunks)
-        warmup_starts.append(warmup_start)
+        seg_bounds.append((seg_start, seg_end, warmup_start))
         start_sample = warmup_start * offset
         end_sample = min((seg_end - 1) * offset + segment, feats_padded.shape[0])
         segment_feats.append(feats_padded[start_sample:end_sample])
 
-    log_probs_list, seconds_per_output_frame = run_streaming_log_probs_batched_cuda_iobinding(
-        sess, segment_feats, device_id=device_id
-    )
+    return segment_feats, seg_bounds
 
+
+def stitch_intra_surah_segments(log_probs_list, seg_bounds):
+    """Inverse of `build_intra_surah_segments`: given each segment's OWN
+    returned `log_probs` (in `log_probs_list`, same order as `seg_bounds`)
+    and the `(seg_start, seg_end, warmup_start)` triples
+    `build_intra_surah_segments` produced for them, keep only each
+    segment's TRUSTED (post-warm-up) portion and concatenate them back
+    into one continuous [T, 251] array for the whole surah -- the exact
+    shape/contract `run_streaming_log_probs_cuda_iobinding` would have
+    returned for this surah run as one unsplit stream.
+    """
     frames_per_chunk_per_segment = [
-        log_probs_list[i].shape[0] // (seg_ends[i] - warmup_starts[i])
-        for i in range(len(seg_starts))
+        log_probs_list[i].shape[0] // (seg_bounds[i][1] - seg_bounds[i][2])
+        for i in range(len(seg_bounds))
     ]
     # Every segment's frames-per-chunk must agree (same model, same fixed
     # per-chunk output size regardless of which chunk-loop call produced
@@ -609,10 +653,9 @@ def run_streaming_log_probs_intra_surah_split_cuda(sess, feats, split_chunk_indi
     frames_per_chunk = frames_per_chunk_per_segment[0]
 
     trusted_parts = []
-    for i, (seg_start, seg_end, warmup_start) in enumerate(zip(seg_starts, seg_ends, warmup_starts)):
+    for i, (seg_start, seg_end, warmup_start) in enumerate(seg_bounds):
         trusted_chunk_offset = seg_start - warmup_start
         trusted_frame_offset = trusted_chunk_offset * frames_per_chunk
         trusted_parts.append(log_probs_list[i][trusted_frame_offset:])
 
-    log_probs = np.concatenate(trusted_parts, axis=0)
-    return log_probs, seconds_per_output_frame
+    return np.concatenate(trusted_parts, axis=0)

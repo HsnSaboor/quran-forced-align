@@ -87,11 +87,13 @@ import math
 import numpy as np
 
 from ..onnx_model import (
+    build_intra_surah_segments,
     choose_intra_surah_split_points,
     make_onnx_session,
     run_streaming_log_probs_batched_cuda_iobinding,
     run_streaming_log_probs_cuda_iobinding,
     run_streaming_log_probs_intra_surah_split_cuda,
+    stitch_intra_surah_segments,
 )
 from ..trellis import build_ext
 
@@ -262,6 +264,95 @@ class CUDAEngine:
         self._last_log_probs_cpu = log_probs
         self._last_log_probs_gpu = self._torch.as_tensor(log_probs, dtype=self._torch.float32, device=self._device)
         return log_probs, seconds_per_frame
+
+    def run_inference_batched_with_intra_surah_split(self, feats_list, silence_feature_frame_positions_list):
+        """Combines `run_inference_batched` and `run_inference_intra_surah_split`:
+        splits EVERY surah in `feats_list` into its own warm-up-overlapped
+        segments at real silence points, then flattens ALL surahs' ALL
+        segments into ONE giant cross-surah-and-cross-segment batch
+        through a SINGLE `run_streaming_log_probs_batched_cuda_iobinding`
+        call -- the maximum-parallelism combination of this package's two
+        batch-axis GPU optimizations, for the target workload of
+        100+ reciters x 114 surahs where both many independent surahs AND
+        each individual surah benefit from batching.
+
+        `silence_feature_frame_positions_list[i]` are surah `i`'s own
+        candidate silence-boundary positions (FBANK-FEATURE-FRAME units,
+        same convention as `run_inference_intra_surah_split` -- see that
+        method's docstring for the unit-conversion requirement), matching
+        `feats_list[i]`.
+
+        Returns `(log_probs_list, seconds_per_frame)`, matching
+        `run_inference_batched`'s contract: `log_probs_list[i]` is surah
+        `i`'s own fully-stitched (warm-up-trimmed, segment-concatenated)
+        [T_i, 251] array -- indistinguishable, from the caller's
+        perspective, from what `run_inference_intra_surah_split` would
+        have returned for that ONE surah alone, except that every surah's
+        segments (and every OTHER surah's segments) were computed in the
+        SAME underlying batched inference call rather than N separate
+        calls.
+
+        DETERMINISM: this combination stacks BOTH of this package's
+        already-independently-verified sources of tiny, decode-
+        irrelevant floating-point drift (cross-surah batch-position
+        drift, ~1e-4 magnitude; intra-surah recursion-length drift, also
+        ~1e-4 magnitude) -- see `run_streaming_log_probs_batched_cuda_iobinding`'s
+        and `run_streaming_log_probs_intra_surah_split_cuda`'s docstrings
+        for each in isolation. Stacking two independently-harmless
+        floating-point perturbations of the same tiny order of magnitude
+        is expected, by the same argument each was individually verified
+        under (CTC forced alignment only needs the correct phoneme to
+        have SOME probability mass at roughly the right place, not to
+        win by more than a fraction of a nat), to remain equally
+        harmless -- verified empirically end-to-end (word/timing/repeat
+        output compared against the fully-serial unbatched-unsplit
+        baseline, not just log_probs closeness) before this method is
+        used in `pipeline.align_surahs_batched`.
+        """
+        meta = self._session.get_modelmeta().custom_metadata_map
+        offset_frames = int(meta.get("decode_chunk_len", 48))
+        segment_frames = int(meta.get("T", 61))
+
+        # Build every surah's own segment list independently, then flatten
+        # ALL surahs' ALL segments into one flat list for a single batched
+        # call -- `seg_bounds_per_surah`/`segment_counts` remember how to
+        # split the flat results back out per surah afterward.
+        all_segment_feats = []
+        seg_bounds_per_surah = []
+        for feats, silence_positions in zip(feats_list, silence_feature_frame_positions_list):
+            T_raw = feats.shape[0]
+            n_chunks_total = 1 if T_raw <= segment_frames else 1 + math.ceil(
+                (T_raw - segment_frames) / offset_frames
+            )
+            split_chunk_indices = choose_intra_surah_split_points(
+                silence_positions, offset_frames, n_chunks_total
+            )
+            if not split_chunk_indices:
+                # No usable split for this surah -- it contributes exactly
+                # ONE "segment" (itself, unsplit, no warm-up needed since
+                # it already starts at chunk 0) to the flattened batch.
+                segment_feats = [feats]
+                seg_bounds = [(0, n_chunks_total, 0)]
+            else:
+                segment_feats, seg_bounds = build_intra_surah_segments(
+                    feats, split_chunk_indices, offset_frames, segment_frames
+                )
+            seg_bounds_per_surah.append(seg_bounds)
+            all_segment_feats.extend(segment_feats)
+
+        all_log_probs, seconds_per_frame = run_streaming_log_probs_batched_cuda_iobinding(
+            self._session, all_segment_feats
+        )
+
+        log_probs_list = []
+        cursor = 0
+        for seg_bounds in seg_bounds_per_surah:
+            n_segments = len(seg_bounds)
+            this_surah_log_probs = all_log_probs[cursor:cursor + n_segments]
+            cursor += n_segments
+            log_probs_list.append(stitch_intra_surah_segments(this_surah_log_probs, seg_bounds))
+
+        return log_probs_list, seconds_per_frame
 
     def _as_device_tensor(self, log_probs):
         """Return `log_probs` (or, if it's a numpy VIEW into the array from

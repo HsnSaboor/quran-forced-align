@@ -75,6 +75,7 @@ def _align_one_surah(surah: int, audio_dir: str, out_dir: str, model_path: str, 
 
 
 def _align_batch_of_surahs(surahs: list[int], audio_dir: str, out_dir: str, model_path: str, tokens_path: str,
+                            intra_surah_split: bool,
                             anomaly_low_ratio: float, anomaly_high_ratio: float,
                             ayah_final_high_ratio_mult: float, repeat_confidence_margin: float,
                             max_repeat_window_words: int | None, tail_silence_sec: float) -> list[dict]:
@@ -87,6 +88,16 @@ def _align_batch_of_surahs(surahs: list[int], audio_dir: str, out_dir: str, mode
     of these batch-tasks run as concurrent OS processes (each opening its
     own CUDA context on the same GPU, same caveat as the unbatched
     `--device cuda` path -- see `build_parser`'s `--max-workers` help).
+
+    `intra_surah_split=True` additionally splits EACH surah in this batch
+    across its own real silence points, flattened into the SAME single
+    batched inference call (see
+    `pipeline.align_surahs_batched`'s `intra_surah_split` parameter and
+    `engines.cuda.CUDAEngine.run_inference_batched_with_intra_surah_split`)
+    -- combining `--cuda-batch-size` with `--intra-surah-split`, unlike
+    the unbatched (`--cuda-batch-size 1`) path where the two features are
+    mutually exclusive (see `build_parser`'s help text and
+    `_validate_device_flags`).
     """
     t0 = time.monotonic()
     audio_paths = [os.path.join(audio_dir, f"{surah:03d}.mp3") for surah in surahs]
@@ -95,6 +106,7 @@ def _align_batch_of_surahs(surahs: list[int], audio_dir: str, out_dir: str, mode
         surahs, audio_paths,
         model_path=model_path,
         tokens_path=tokens_path,
+        intra_surah_split=intra_surah_split,
         anomaly_low_ratio=anomaly_low_ratio,
         anomaly_high_ratio=anomaly_high_ratio,
         ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
@@ -152,11 +164,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "section for the measured determinism characterization of batched "
                           "inference before increasing this for a production run.")
     ap.add_argument("--intra-surah-split", action="store_true",
-                     help="--device cuda ONLY, and only when --cuda-batch-size is 1 (the two "
-                          "features are complementary, not combined in this release): split "
-                          "EACH surah's own acoustic-model inference into warm-up-overlapped "
-                          "segments at real silence points for real single-surah GPU speedup "
-                          "(see cli.py's --intra-surah-split for the full description).")
+                     help="--device cuda ONLY: split EACH surah's own acoustic-model inference "
+                          "into warm-up-overlapped segments at real silence points, for GPU "
+                          "speedup even on a single surah. Composes with --cuda-batch-size > 1: "
+                          "every surah's every segment is flattened into ONE combined batch for "
+                          "maximum GPU throughput (see pipeline.align_surahs_batched's "
+                          "intra_surah_split parameter). See cli.py's --intra-surah-split for the "
+                          "full description of the underlying technique.")
     ap.add_argument("--max-workers", type=int, default=os.cpu_count())
     add_tuning_args(ap)
     return ap
@@ -178,6 +192,12 @@ def _validate_device_flags(args) -> None:
     than inlined in `main()`) so it's unit-testable without invoking the
     real `ProcessPoolExecutor`/engine-construction machinery `main()` goes
     on to run after validation passes (see tests/test_batch_cli.py).
+
+    `--intra-surah-split` and `--cuda-batch-size > 1` MAY be combined
+    (see `pipeline.align_surahs_batched`'s `intra_surah_split` parameter
+    and `engines.cuda.CUDAEngine.run_inference_batched_with_intra_surah_split`)
+    -- an earlier revision of this validation rejected that combination
+    as unimplemented; both are now supported together.
     """
     if args.cuda_batch_size != 1 and args.device != "cuda":
         raise SystemExit("--cuda-batch-size > 1 requires --device cuda")
@@ -185,8 +205,6 @@ def _validate_device_flags(args) -> None:
         raise SystemExit("--cuda-batch-size must be >= 1")
     if args.intra_surah_split and args.device != "cuda":
         raise SystemExit("--intra-surah-split requires --device cuda")
-    if args.intra_surah_split and args.cuda_batch_size != 1:
-        raise SystemExit("--intra-surah-split and --cuda-batch-size > 1 cannot be combined in this release")
 
 
 def main():
@@ -200,7 +218,15 @@ def main():
 
     results = {}
     errors = {}
-    if args.cuda_batch_size > 1:
+    # Route through the batched-CUDA path (_align_batch_of_surahs) if
+    # EITHER --cuda-batch-size > 1 OR --intra-surah-split is set --
+    # `align_surahs_batched` (which _align_batch_of_surahs calls) handles
+    # a batch of size 1 with intra_surah_split=True correctly too (see
+    # its docstring), so a single unified code path here covers all three
+    # real combinations (cuda-batch-size alone, intra-surah-split alone,
+    # or both together) without a third branch.
+    use_batched_path = args.cuda_batch_size > 1 or args.intra_surah_split
+    if use_batched_path:
         # Batched CUDA path: each ProcessPoolExecutor task covers a BATCH
         # of surahs (see _align_batch_of_surahs), not one surah each.
         batches = _chunked(surah_list, args.cuda_batch_size)
@@ -209,6 +235,7 @@ def main():
             future_to_batch = {
                 pool.submit(
                     _align_batch_of_surahs, batch, args.audio_dir, args.out_dir, args.model, args.tokens,
+                    args.intra_surah_split,
                     args.anomaly_low_ratio, args.anomaly_high_ratio, args.ayah_final_high_ratio_mult,
                     args.repeat_confidence_margin, args.max_repeat_window_words, args.tail_silence_sec,
                 ): batch

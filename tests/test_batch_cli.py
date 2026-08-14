@@ -97,13 +97,18 @@ def test_validation_rejects_intra_surah_split_without_cuda_device():
         _validate_device_flags(args)
 
 
-def test_validation_rejects_intra_surah_split_combined_with_cuda_batch_size():
+def test_validation_allows_intra_surah_split_combined_with_cuda_batch_size():
+    # --intra-surah-split and --cuda-batch-size > 1 CAN be combined (see
+    # pipeline.align_surahs_batched's intra_surah_split parameter and
+    # engines.cuda.CUDAEngine.run_inference_batched_with_intra_surah_split)
+    # -- an earlier revision of this validation rejected the combination
+    # as unimplemented; this is a regression test for that no longer
+    # being the case.
     args = _parse([
         "--surahs", "1", "--audio-dir", "a", "--out-dir", "b",
         "--device", "cuda", "--cuda-batch-size", "4", "--intra-surah-split",
     ])
-    with pytest.raises(SystemExit, match="cannot be combined"):
-        _validate_device_flags(args)
+    _validate_device_flags(args)  # must not raise
 
 
 def test_validation_passes_for_valid_cuda_batch_size_alone():

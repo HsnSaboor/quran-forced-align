@@ -285,6 +285,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
 
 
 def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_path: str, tokens_path: str,
+                          intra_surah_split: bool = False,
                           anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
                           anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
                           ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
@@ -298,6 +299,21 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
     and `onnx_model.run_streaming_log_probs_batched_cuda_iobinding` for the
     full rationale and ragged-length padding scheme), then runs each
     surah's own forced-alignment/repeat-detection/confidence steps
+
+    `intra_surah_split=True` STACKS this cross-surah batching with the
+    intra-surah silence-split optimization (see `align_surah`'s own
+    `intra_surah_split` parameter): every surah's own audio is ALSO split
+    into warm-up-overlapped segments at real silence points, and every
+    surah's every segment is flattened into ONE giant cross-surah-and-
+    cross-segment batch (see
+    `engines.cuda.CUDAEngine.run_inference_batched_with_intra_surah_split`)
+    -- the maximum-parallelism combination of both optimizations, for the
+    100+ reciters x 114 surahs target workload where both many surahs AND
+    each individual surah benefit from batching. Verified empirically
+    (end-to-end word/timing/repeat output, not just log_probs closeness)
+    to remain byte-identical-at-the-decode-level to the fully serial
+    baseline, stacking the two independently-verified-harmless sources of
+    floating-point drift described in each optimization's own docstring.
     (identical logic to `align_surah`'s steps [4/6]-[6/6], via
     `_align_from_log_probs`) sequentially against its own `log_probs`
     slice.
@@ -343,8 +359,21 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
     ]
     feats_list = [inputs[5] for inputs in per_surah_inputs]
 
-    log(f"[3/6 batched] Running streaming Zipformer2-CTC for {len(surahs)} surahs in one batched pass...")
-    log_probs_list, seconds_per_frame = engine.run_inference_batched(feats_list)
+    if intra_surah_split and hasattr(engine, "run_inference_batched_with_intra_surah_split"):
+        samples_list = [inputs[6] for inputs in per_surah_inputs]
+        silence_frames_list = [
+            [pos // FBANK_FRAME_SHIFT_SAMPLES for pos in find_silence_midpoints(samples, SAMPLE_RATE)]
+            for samples in samples_list
+        ]
+        total_splits = sum(1 for frames in silence_frames_list if frames)
+        log(f"[3/6 batched+split] Running streaming Zipformer2-CTC for {len(surahs)} surahs "
+            f"({total_splits} with usable silence splits) in one combined batched pass...")
+        log_probs_list, seconds_per_frame = engine.run_inference_batched_with_intra_surah_split(
+            feats_list, silence_frames_list
+        )
+    else:
+        log(f"[3/6 batched] Running streaming Zipformer2-CTC for {len(surahs)} surahs in one batched pass...")
+        log_probs_list, seconds_per_frame = engine.run_inference_batched(feats_list)
 
     results = []
     for surah, (tok2id, id2tok, blank_id, combined_token_ids, word_slots, _feats, _samples), log_probs in zip(

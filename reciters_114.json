@@ -1,0 +1,43 @@
+{
+  "_note": "Only process reciters with all 114 .mp3 files verified. URLs built from session-2026-08-14 network patterns (media.assabile.com + ajax/getrcita-link). Primary set = collection 9 (murattal, data-default=1).",
+  "reciters": [
+    {
+      "name": "abdul-rahman-al-sudais-12",
+      "slug": "abdul-rahman-al-sudais",
+      "reciter_id": 12,
+      "audio_dir_suggested": "/content/drive/MyDrive/quran_forced_align/audio_input/sudais",
+      "recitation_set": "7892537823",
+      "primary_collection": 9,
+      "surahs": [
+        {"surah": 1, "name": "al-fatiha", "href_id": 3218, "mp3_url": "https://media.assabile.com/assabile/recitations_7892537823/mp3/abdul-rahman-al-sudais-001-al-fatiha-3218-8020.mp3"},
+        {"surah": 2, "name": "al-baqara", "href_id": 3216, "mp3_url": "https://media.assabile.com/assabile/recitations_7892537823/mp3/abdul-rahman-al-sudais-002-al-baqara-3216-5658.mp3"},
+        {"surah": 3, "name": "ali-imran", "href_id": null, "mp3_url": "https://media.assabile.com/assabile/recitations_7892537823/mp3/abdul-rahman-al-sudais-003-ali-imran-TBD-TBD.mp3"},
+        {"surah": 4, "name": "an-nisa", "href_id": null, "mp3_url": null},
+        {"surah": 5, "name": "al-ma-idah", "href_id": null, "mp3_url": null},
+        {"surah": 6, "name": "al-an-am", "href_id": null, "mp3_url": null},
+        {"surah": 7, "name": "al-a-raf", "href_id": null, "mp3_url": null},
+        {"surah": 8, "name": "al-anfal", "href_id": null, "mp3_url": null},
+        {"surah": 9, "name": "at-tawbah", "href_id": null, "mp3_url": null},
+        {"surah": 10, "name": "yunus", "href_id": null, "mp3_url": null}
+      ],
+      "surah_count_target": 114,
+      "surah_count_available_via_ajax": "discover via /ajax/loadplayer-12-{surah_href_id} per surah"
+    },
+    {
+      "name": "mu-ayyid-al-mazen-366",
+      "slug": "mu-ayyid-al-mazen",
+      "reciter_id": 366,
+      "audio_dir_suggested": "/content/drive/MyDrive/quran_forced_align/audio_input/mazen",
+      "recitation_set": "unknown_from_loadplayer_366_397",
+      "primary_collection": 397,
+      "surahs": [
+        {"surah": 1, "name": "al-fatiha", "href_id": null, "mp3_url": null},
+        {"surah": 2, "name": "al-baqara", "href_id": 33573, "mp3_url": "https://media.assabile.com/assabile/recitations_TBD/mp3/mu-ayyid-al-mazen-002-al-baqara-33573-TBD.mp3"}
+      ],
+      "surah_count_target": 114,
+      "surah_count_available_via_ajax": "discover via /ajax/loadplayer-366-{surah_href_id} per surah"
+    }
+  ],
+  "download_strategy": "For full automation, call /ajax/getrcita-link-{href_id} per surah (from loadplayer JSON) to get real MP3 URL, then download. Only process reciters where downloaded count == 114.",
+  "filter_instruction": "Before alignment, check len([f for f in os.listdir(audio_dir) if f.endswith('.mp3')]) == 114. If not 114, skip reciter."
+}
