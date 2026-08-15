@@ -9,6 +9,16 @@ import numpy as np
 from quran_forced_align.trellis import avg_logprob_along_path, build_ext, frame_spans_from_path
 
 
+def _reference_frame_spans(path, num_states):
+    first_seen = np.full(num_states, -1, dtype=np.int64)
+    last_seen = np.full(num_states, -1, dtype=np.int64)
+    for t, s in enumerate(path):
+        if first_seen[s] == -1:
+            first_seen[s] = t
+        last_seen[s] = t
+    return first_seen, last_seen
+
+
 def test_build_ext_interleaves_blanks_around_every_ref_id():
     ext = build_ext([5, 7, 5], blank_id=0)
     assert ext.tolist() == [0, 5, 0, 7, 0, 5, 0]
@@ -34,6 +44,35 @@ def test_frame_spans_from_path_single_frame():
     first_seen, last_seen = frame_spans_from_path(path, num_states=3)
     assert first_seen.tolist() == [-1, -1, 0]
     assert last_seen.tolist() == [-1, -1, 0]
+
+
+def test_frame_spans_from_path_matches_reference_loop_random():
+    # The vectorized duplicate-index fancy-assignment version must be
+    # identical to the former Python loop on random monotonic paths with
+    # repeats and never-occupied states.
+    rng = np.random.default_rng(2024)
+    for _ in range(300):
+        T = int(rng.integers(1, 80))
+        num_states = int(rng.integers(1, 12))
+        # monotonic nondecreasing path with repeats, some states skipped
+        path = np.sort(rng.integers(0, num_states, size=T)).astype(np.int64)
+        first_seen, last_seen = frame_spans_from_path(path, num_states)
+        ref_first, ref_last = _reference_frame_spans(path, num_states)
+        assert np.array_equal(first_seen, ref_first)
+        assert np.array_equal(last_seen, ref_last)
+
+
+def test_frame_spans_from_path_first_and_last_seen_semantics():
+    # Direct check of the vectorized trick's edge semantics: state with a
+    # single frame, state visited in the middle, state never visited.
+    path = np.array([0, 1, 1, 0, 2, 0], dtype=np.int64)
+    first_seen, last_seen = frame_spans_from_path(path, num_states=4)
+    # state 0: frames 0, 3, 5 -> first 0, last 5
+    # state 1: frames 1, 2 -> first 1, last 2
+    # state 2: frame 4 -> first 4, last 4
+    # state 3: never -> -1, -1
+    assert first_seen.tolist() == [0, 1, 4, -1]
+    assert last_seen.tolist() == [5, 2, 4, -1]
 
 
 def test_avg_logprob_along_path_basic():

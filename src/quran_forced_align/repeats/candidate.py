@@ -2,8 +2,26 @@ from ..trellis import frame_spans_from_path
 from .spans import token_frame_spans
 
 
+def build_phrase_ids(word_indices, cues, combined_token_ids):
+    """Build the single-copy token-id sequence for the candidate phrase at
+    `word_indices` (the concatenation, in word order, of each word's
+    tokens' ids) and its doubled copy. Extracted from
+    `_repeat_window_candidate` so detect_and_fix_repeats' K-search can run
+    the free-decode cross-check (FIX 5) BEFORE paying for the forced
+    alignment -- the gate needs these two id lists, which the candidate
+    function itself used to build at the top of every call. Returns
+    (phrase_token_ids, doubled_ids); both are plain Python lists in the
+    exact order the old in-candidate build produced."""
+    phrase_token_ids = []
+    for j in word_indices:
+        phrase_token_ids.extend(combined_token_ids[p] for p in cues[j]["token_positions"])
+    doubled_ids = phrase_token_ids + phrase_token_ids
+    return phrase_token_ids, doubled_ids
+
+
 def _repeat_window_candidate(engine, word_indices, cues, log_probs, combined_token_ids, blank_id,
-                              window_start, window_end, min_word_dur_frames):
+                              window_start, window_end, min_word_dur_frames,
+                              phrase_token_ids=None, doubled_ids=None):
     """Try ONE candidate repeated-phrase hypothesis: the contiguous words at
     `word_indices` (indices into `cues`, in ascending order -- may be a
     single word or a multi-word phrase) doubled back-to-back and re-aligned
@@ -15,6 +33,11 @@ def _repeat_window_candidate(engine, word_indices, cues, log_probs, combined_tok
     between engines (see `engines/cuda.py`'s module docstring) and mixing
     them within one surah's repeat-detection pass would silently compare
     margins from two different confidence scales.
+
+    `phrase_token_ids`/`doubled_ids`, if given, are the candidate phrase's
+    id lists (from `build_phrase_ids`) -- the K-search caller computes them
+    already for its free-decode gate and passes them in so they aren't
+    rebuilt here; when absent they are built here, exactly as before.
 
     This is the shared core the K=1 (single-word) doubling used to do
     inline; it's now extracted so the K-search loop in
@@ -47,10 +70,8 @@ def _repeat_window_candidate(engine, word_indices, cues, log_probs, combined_tok
         acc += nt
     L = acc
 
-    phrase_token_ids = []
-    for j in word_indices:
-        phrase_token_ids.extend(combined_token_ids[p] for p in cues[j]["token_positions"])
-    doubled_ids = phrase_token_ids + phrase_token_ids
+    if phrase_token_ids is None or doubled_ids is None:
+        phrase_token_ids, doubled_ids = build_phrase_ids(word_indices, cues, combined_token_ids)
 
     window_log_probs = log_probs[window_start:window_end + 1]
     ext2, path2, margins2 = engine.forced_align(window_log_probs, doubled_ids, blank_id)
@@ -102,10 +123,10 @@ def _repeat_window_candidate(engine, word_indices, cues, log_probs, combined_tok
         "copy2_end_local": copy2_end_local,
         "per_word_copy1": per_word_copy1,
         "per_word_copy2": per_word_copy2,
-        # Exposed for the free-decode cross-check in detect_and_fix_repeats
-        # (see FIX 5 in that function's docstring) -- built here already for
-        # the doubled-reference forced alignment above, so the caller
-        # doesn't need to rebuild them redundantly.
+        # The candidate phrase's id lists -- built here (or passed in from
+        # the caller's free-decode gate via `build_phrase_ids`) and exposed
+        # so the gate's thresholds stay checkable against the exact ids
+        # this alignment actually used.
         "phrase_token_ids": phrase_token_ids,
         "doubled_ids": doubled_ids,
     }

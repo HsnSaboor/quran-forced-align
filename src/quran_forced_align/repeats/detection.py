@@ -8,9 +8,9 @@ from ..constants import (
     GAP_ARTIFACT_MAX_FRAMES,
     GAP_ARTIFACT_MIN_MARGIN,
 )
-from ..decode import greedy_ctc_decode_ids, token_id_levenshtein_ratio
+from ..decode import _collapse_ctc_ids, token_id_levenshtein_ratio
 from ..trellis import avg_logprob_along_path
-from .candidate import _repeat_window_candidate
+from .candidate import _repeat_window_candidate, build_phrase_ids
 
 
 def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id, ext, path,
@@ -171,18 +171,39 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
        high across the boundary into whatever comes next (real phonemes ARE
        there, just not in the doubled pattern being tested for).
 
-       We decode `cand["window_log_probs"]` (already sliced out for the
-       forced-alignment call above -- no new audio decode or ONNX inference
-       needed) with `decode.greedy_ctc_decode_ids` and compare the result,
-       at token-id granularity, against the single-copy phrase
-       (`phrase_token_ids`) and the doubled phrase (`doubled_ids`) using
-       `decode.token_id_levenshtein_ratio`. A genuine two-occurrence window
-       is required to look MORE like two copies than one, with real
-       headroom, and to look reasonably like two copies on an absolute
-       basis (ruling out a low-confidence decode that happens to edge out
+       We decode the K-window's `log_probs` slice (`log_probs[window_start:
+       window_end + 1]` -- the exact same slice `_repeat_window_candidate`
+       passes to the doubled-reference forced alignment; no new audio decode
+       or ONNX inference needed) with `decode.greedy_ctc_decode_ids` and
+       compare the result, at token-id granularity, against the single-copy
+       phrase (`phrase_token_ids`) and the doubled phrase (`doubled_ids`)
+       using `decode.token_id_levenshtein_ratio`. A genuine two-occurrence
+       window is required to look MORE like two copies than one, with real
+       headroom, and to look reasonably like two copies on an absolute basis
+       (ruling out a low-confidence decode that happens to edge out
        ratio_single by chance): reject unless
        `ratio_doubled >= FREE_DECODE_MIN_RATIO_DOUBLED` AND
        `ratio_doubled - ratio_single >= FREE_DECODE_MIN_MARGIN`.
+
+       NOTE ON GATE ORDER (performance + correctness): this gate runs BEFORE
+       the `_repeat_window_candidate` forced-alignment call in the K loop
+       (it only needs the window slice and the phrase id lists, both of
+       which are available without any engine call). Every gate in this
+       loop is a pure boolean rejection -- the `best` selection and
+       `consumed` update happen only after ALL gates pass -- so reordering
+       the gates is behavior-preserving, and the free-decode gate is by far
+       the cheaper one to run first: it is the single most expensive thing
+       per K that survives to the post-alignment stage (an O(T) collapse
+       plus two O(n*m) Levenshtein DPs over decoded lengths that can reach
+       thousands of frames), but the forced-alignment kernel launch it
+       short-circuits is a GPU round-trip that must run for EVERY K that
+       reaches it. With the gate in front, the majority of K values (which
+       would fail the free-decode check anyway) never pay for the alignment
+       at all. The gate's two Levenshtein calls also use the `min_ratio`
+       early-exit bound (see `decode.token_id_levenshtein_ratio`'s
+       docstring), which provably skips the DP whenever the true ratio is
+       guaranteed to fail its threshold, so the decision sequence is
+       byte-identical to the un-ordered exact-DP formulation.
 
        IMPORTANT CALIBRATION NOTE: an initial hand-rolled verification
        script (run against a narrow +/-1.5s pad around only the flagged
@@ -276,6 +297,35 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
         # completing streams) for a measured zero speedup. Left as a plain
         # sequential loop.
         best = None  # (K, candidate_dict, bilateral_confidence, window_start)
+
+        # window_end depends only on i, not K -- the K-word window always
+        # ends right before the next cue (or at the true end of the audio),
+        # and only window_start moves earlier as K grows. Computing it once
+        # here (instead of inside the loop, where it was identical every
+        # iteration) is what makes the per-word argmax reuse below
+        # well-defined.
+        window_end = cues[i + 1]["start_frame"] - 1 if i < n - 1 else log_probs.shape[0] - 1
+        window_end = min(log_probs.shape[0] - 1, window_end)
+
+        # PERFORMANCE (per-word argmax reuse): since window_start moves only
+        # EARLIER (smaller) as K grows, every K window is a suffix of the
+        # widest K=k_max window, so np.argmax over [window_start_widest,
+        # window_end] can be computed ONCE per anomalous word i instead of
+        # once per K -- argmax is elementwise per frame, and the CTC collapse
+        # (`decode._collapse_ctc_ids`) is a pure function of the id sequence
+        # with a fresh blank sentinel, so collapsing a suffix of this
+        # precomputed argmax is bit-identical to decoding that suffix alone.
+        # (Verified by tests; the widest window is what K=k_max would use,
+        # and if it is empty, every narrower K window is empty too, since
+        # window_start only grows from there -- so the whole K loop would
+        # `continue` on every iteration, and skipping it is equivalent.)
+        j0_widest = i - k_max + 1
+        window_start_widest = cues[j0_widest - 1]["end_frame"] + 1 if j0_widest > 0 else max(0, cues[j0_widest]["start_frame"] - margin)
+        window_start_widest = max(0, window_start_widest)
+        if window_end <= window_start_widest:
+            continue
+        window_ids = np.argmax(log_probs[window_start_widest:window_end + 1], axis=-1)
+
         for K in range(1, k_max + 1):
             j0 = i - K + 1
             if j0 < 0:
@@ -307,16 +357,48 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
             # of the clip there is no neighbouring cue's frames to avoid
             # touching, so there is no reason to hold back.
             window_start = cues[j0 - 1]["end_frame"] + 1 if j0 > 0 else max(0, cues[j0]["start_frame"] - margin)
-            window_end = cues[i + 1]["start_frame"] - 1 if i < n - 1 else log_probs.shape[0] - 1
             window_start = max(0, window_start)
-            window_end = min(log_probs.shape[0] - 1, window_end)
             if window_end <= window_start:
                 continue
 
             word_indices = list(range(j0, i + 1))
+            phrase_token_ids, doubled_ids = build_phrase_ids(word_indices, cues, combined_token_ids)
+
+            # Fix 5's free-decode cross-check -- see docstring point 5. An
+            # UNCONSTRAINED greedy decode of this same window (no reference
+            # bias) must itself look more like TWO copies of the phrase
+            # than ONE, with real headroom, and must look reasonably like
+            # two copies on an absolute basis. Runs BEFORE the forced
+            # alignment below: the window slice and phrase id lists are
+            # both available here without any engine call, and rejecting
+            # early skips the expensive forced_align kernel launch for the
+            # majority of K values that would fail this gate anyway (the
+            # post-alignment re-check this gate used to be is gone -- the
+            # gate is a pure boolean rejection, so its position relative to
+            # the other gates cannot change the final decision, only which
+            # K values pay for the alignment). The Levenshtein calls use
+            # the provable `min_ratio` early-exit bound: `ratio_doubled`'s
+            # bound only skips when the true ratio is certainly below
+            # FREE_DECODE_MIN_RATIO_DOUBLED (and the exact value is kept
+            # otherwise, which the margin check needs); `ratio_single`'s
+            # bound only skips when the true ratio is certainly below
+            # ratio_doubled - FREE_DECODE_MIN_MARGIN, which is exactly the
+            # margin gate's rejection condition. Both bound decisions are
+            # provably identical to running the exact DPs (see
+            # decode.token_id_levenshtein_ratio's docstring).
+            ids = window_ids[window_start - window_start_widest:]
+            decoded_ids = _collapse_ctc_ids(ids, blank_id)
+            ratio_doubled = token_id_levenshtein_ratio(decoded_ids, doubled_ids, min_ratio=FREE_DECODE_MIN_RATIO_DOUBLED)
+            if ratio_doubled < FREE_DECODE_MIN_RATIO_DOUBLED:
+                continue
+            ratio_single = token_id_levenshtein_ratio(decoded_ids, phrase_token_ids, min_ratio=ratio_doubled - FREE_DECODE_MIN_MARGIN)
+            if ratio_doubled - ratio_single < FREE_DECODE_MIN_MARGIN:
+                continue
+
             cand = _repeat_window_candidate(
                 engine, word_indices, cues, log_probs, combined_token_ids, blank_id,
                 window_start, window_end, min_word_dur_frames,
+                phrase_token_ids=phrase_token_ids, doubled_ids=doubled_ids,
             )
             if cand is None:
                 continue
@@ -352,23 +434,6 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
             gap_frames = cand["copy2_start_local"] - cand["copy1_end_local"]
             margin_above_floor = bilateral - confidence_floor
             if gap_frames <= GAP_ARTIFACT_MAX_FRAMES and margin_above_floor < GAP_ARTIFACT_MIN_MARGIN:
-                continue
-
-            # Fix 5's free-decode cross-check -- see docstring point 5. An
-            # UNCONSTRAINED greedy decode of this same window (no reference
-            # bias) must itself look more like TWO copies of the phrase
-            # than ONE, with real headroom, and must look reasonably like
-            # two copies on an absolute basis. Computed on
-            # `cand["window_log_probs"]`, which is already sliced out above
-            # -- no new inference needed.
-            decoded_ids = greedy_ctc_decode_ids(cand["window_log_probs"], blank_id)
-            ratio_single = token_id_levenshtein_ratio(decoded_ids, cand["phrase_token_ids"])
-            ratio_doubled = token_id_levenshtein_ratio(decoded_ids, cand["doubled_ids"])
-            free_decode_passes = (
-                ratio_doubled >= FREE_DECODE_MIN_RATIO_DOUBLED
-                and (ratio_doubled - ratio_single) >= FREE_DECODE_MIN_MARGIN
-            )
-            if not free_decode_passes:
                 continue
 
             # Tie-break rule (see docstring point 3): keep the K with the

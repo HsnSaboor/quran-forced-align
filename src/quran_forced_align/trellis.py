@@ -30,13 +30,20 @@ def frame_spans_from_path(path, num_states):
     which the (monotonic, nondecreasing) alignment path occupied that
     state. -1 means the state was never occupied (shouldn't happen for
     label states in a successful alignment, since every label must be
-    visited)."""
-    first_seen = np.full(num_states, -1, dtype=np.int64)
+    visited).
+
+    Vectorized via duplicate-index fancy assignment, which keeps the LAST
+    assigned value per index: `last_seen[path] = t` assigns in ascending
+    frame order, so each state ends up with its latest frame; `first_seen`
+    assigns `t` in REVERSE frame order, so each state ends up with its
+    earliest frame -- identical to the former Python loop, without the
+    O(T) interpreter overhead.
+    """
+    t = np.arange(path.shape[0])
     last_seen = np.full(num_states, -1, dtype=np.int64)
-    for t, s in enumerate(path):
-        if first_seen[s] == -1:
-            first_seen[s] = t
-        last_seen[s] = t
+    first_seen = np.full(num_states, -1, dtype=np.int64)
+    last_seen[path] = t
+    first_seen[path[::-1]] = t[::-1]
     return first_seen, last_seen
 
 

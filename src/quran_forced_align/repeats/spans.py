@@ -1,3 +1,6 @@
+import numpy as np
+
+
 def token_frame_spans(token_positions, first_seen, last_seen):
     """For a list of token positions (indices into a combined token-id
     list), return (per_token_spans, word_start, word_end) where
@@ -13,18 +16,20 @@ def token_frame_spans(token_positions, first_seen, last_seen):
     computed identically, once, wherever a word's frame span is derived
     from token-level trellis states, instead of two near-duplicate min/max
     loops that could drift apart under future edits.
+
+    Vectorized with numpy fancy indexing over the label states 2*p+1 --
+    one gather per of first_seen/last_seen instead of a Python loop over
+    the token positions. The return contract is unchanged: a list of
+    (int, int) tuples, or None.
     """
-    per_token_spans = []
-    for p in token_positions:
-        s = 2 * p + 1
-        start, end = first_seen[s], last_seen[s]
-        if start < 0 or end < 0:
-            return None
-        per_token_spans.append((int(start), int(end)))
-    if not per_token_spans:
+    states = 2 * np.asarray(token_positions, dtype=np.int64) + 1
+    starts = first_seen[states]
+    ends = last_seen[states]
+    if starts.size == 0 or np.any(starts < 0) or np.any(ends < 0):
         return None
-    word_start = min(s for s, _ in per_token_spans)
-    word_end = max(e for _, e in per_token_spans)
+    per_token_spans = list(zip(starts.tolist(), ends.tolist()))
+    word_start = int(np.min(starts))
+    word_end = int(np.max(ends))
     return per_token_spans, word_start, word_end
 
 
