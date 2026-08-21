@@ -1,9 +1,19 @@
-"""Thin argparse wrapper around pipeline.align_surah for single-surah use.
+"""S-Tier CLI for Quran Forced Alignment.
 
-  quran-forced-align --surah 1 --audio audio/001001_full.mp3 --out srt_output/forced_test_s1.srt
+Zero-configuration forced-alignment with auto-model resolution, auto-device
+detection (CUDA / CPU), Hugging Face caching, and multi-format subtitle output.
+
+Examples:
+  # Auto-detects device, auto-downloads model, outputs both JSON and SRT:
+  quran-forced-align --surah 66 --audio audio/066_basit.mp3 --out srt_output/066_basit.json
+
+  # Explicit CUDA execution with intra-surah parallelism:
+  quran-forced-align --surah 18 --audio audio/018_sudais.mp3 --out out/018 --device cuda --format both
 """
 import argparse
 import os
+import sys
+from pathlib import Path
 
 from .constants import (
     DEFAULT_ANOMALY_HIGH_RATIO,
@@ -13,68 +23,72 @@ from .constants import (
     DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     DEFAULT_TAIL_SILENCE_SEC,
 )
+from .model_manager import resolve_device, resolve_model, resolve_tokens
 from .pipeline import align_surah
 from .srt import emit_json_rich, emit_srt
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--surah", type=int, required=True)
-    ap.add_argument("--audio", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--model", default="model/zipformer_p_arabic_v3.int8.onnx")
-    ap.add_argument("--tokens", default="model/tokens.txt")
-    ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu",
-                     help="forced-alignment execution engine: 'cpu' (default, deterministic ONNX "
-                          "CPUExecutionProvider + numpy Viterbi) or 'cuda' (onnxruntime "
-                          "CUDAExecutionProvider + torchaudio.functional.forced_align; requires "
-                          "the 'cuda' extra -- see pyproject.toml -- and a CUDA-capable GPU)")
-    ap.add_argument("--intra-surah-split", action="store_true",
-                     help="--device cuda ONLY: split THIS surah's own acoustic-model inference into "
-                          "multiple warm-up-overlapped segments at real silence points, for real "
-                          "single-surah GPU speedup (~2x measured on a real T4 GPU for a "
-                          "~6-minute surah). Falls back to unsplit inference automatically if no "
-                          "usable silence gap is found. See README's GPU execution section for the "
-                          "empirically-verified decode-level determinism characterization.")
+    ap = argparse.ArgumentParser(
+        prog="quran-forced-align",
+        description="Quran Forced Alignment: Align continuous recitation audio with Uthmani Quranic text.",
+    )
+    ap.add_argument("--surah", type=int, required=True, help="Surah number (1-114)")
+    ap.add_argument("--audio", required=True, help="Path to recitation audio (.mp3, .opus, .wav, .m4a)")
+    ap.add_argument("--out", required=True, help="Output filepath or base path (e.g. output.json or output.srt)")
+    ap.add_argument("--format", choices=["auto", "json", "srt", "both"], default="auto",
+                    help="Output format. 'auto' infers from --out extension or writes both if no extension provided.")
+    ap.add_argument("--model", default=None,
+                    help="Path to ONNX model. If omitted, automatically resolves or downloads from Hugging Face.")
+    ap.add_argument("--tokens", default=None,
+                    help="Path to tokens.txt. If omitted, automatically resolves or downloads from Hugging Face.")
+    ap.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto",
+                    help="Execution device: 'auto' (default: CUDA if available, else CPU), 'cuda', or 'cpu'.")
+    ap.add_argument("--intra-surah-split", action="store_true", default=None,
+                    help="Enable parallel intra-surah GPU streaming. Enabled automatically on CUDA by default.")
     add_tuning_args(ap)
     return ap
 
 
 def add_tuning_args(ap: argparse.ArgumentParser) -> None:
-    """Shared tuning flags for the forced-alignment + repeat-detection
-    pipeline, factored out so cli.py and batch_cli.py don't duplicate flag
-    definitions."""
+    """Shared tuning flags for the forced-alignment + repeat-detection pipeline."""
     ap.add_argument("--anomaly-low-ratio", type=float, default=DEFAULT_ANOMALY_LOW_RATIO,
-                     help="flag a word as anomalously SHORT if its duration is below this fraction of the median")
+                    help="Flag a word as anomalously SHORT if duration < ratio * median.")
     ap.add_argument("--anomaly-high-ratio", type=float, default=DEFAULT_ANOMALY_HIGH_RATIO,
-                     help="flag a word as anomalously LONG if its duration exceeds this multiple of the median")
+                    help="Flag a word as anomalously LONG if duration > ratio * median.")
     ap.add_argument("--ayah-final-high-ratio-mult", type=float, default=DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
-                     help="multiply --anomaly-high-ratio by this for ayah-final words before flagging them as "
-                          "anomalously long, since natural waqf (pause) lengthening at ayah boundaries is "
-                          "expected and NOT a repeat signal (see repeats.detect_and_fix_repeats)")
+                    help="Waqf pause multiplier for ayah-final words before flagging as repeat.")
     ap.add_argument("--repeat-confidence-margin", type=float, default=DEFAULT_REPEAT_CONFIDENCE_MARGIN,
-                     help="reject a candidate repeat split unless BOTH copies' average per-frame log-likelihood "
-                          "along the doubled-reference re-alignment is within this margin of the surah's own "
-                          "normal-word acoustic-confidence baseline (see repeats.detect_and_fix_repeats)")
+                    help="Acoustic log-likelihood confidence margin for repeat acceptance.")
     ap.add_argument("--max-repeat-window-words", type=int, default=DEFAULT_MAX_REPEAT_WINDOW_WORDS,
-                     help="OPTIONAL hard cap (in words) on the repeated-phrase K-search when a word's duration is "
-                          "flagged as anomalous. By default (unset) the search is bounded naturally by how many "
-                          "words remain in the current ayah -- a real hifz-practice repeat never spans into a "
-                          "different ayah -- so any repeated-phrase length is found correctly with no magic "
-                          "number required; this flag only exists as a cost-control escape valve for "
-                          "pathologically long ayahs (see repeats.detect_and_fix_repeats)")
-    ap.add_argument("--tail-silence-sec", type=float, default=DEFAULT_TAIL_SILENCE_SEC)
+                    help="Cap on repeated-phrase search window in words.")
+    ap.add_argument("--tail-silence-sec", type=float, default=DEFAULT_TAIL_SILENCE_SEC,
+                    help="Padding tail silence in seconds.")
 
 
 def main():
     args = build_parser().parse_args()
 
+    # 1. Resolve Device & Acceleration Flags
+    device = resolve_device(args.device)
+    intra_surah_split = (device == "cuda") if args.intra_surah_split is None else args.intra_surah_split
+
+    # 2. Resolve Model & Token Assets (with auto-download if missing)
+    tokens_path = resolve_tokens(args.tokens)
+    model_path = resolve_model(args.model, device=device)
+
+    print(f"🚀 Quran Forced Alignment: Surah {args.surah}")
+    print(f"   Audio:  {args.audio}")
+    print(f"   Device: {device.upper()} (Intra-Surah Parallelism: {intra_surah_split})")
+    print(f"   Model:  {model_path}")
+
+    # 3. Execute Alignment Pipeline
     records = align_surah(
         args.surah, args.audio,
-        model_path=args.model,
-        tokens_path=args.tokens,
-        device=args.device,
-        intra_surah_split=args.intra_surah_split,
+        model_path=model_path,
+        tokens_path=tokens_path,
+        device=device,
+        intra_surah_split=intra_surah_split,
         anomaly_low_ratio=args.anomaly_low_ratio,
         anomaly_high_ratio=args.anomaly_high_ratio,
         ayah_final_high_ratio_mult=args.ayah_final_high_ratio_mult,
@@ -83,10 +97,33 @@ def main():
         tail_silence_sec=args.tail_silence_sec,
     )
 
-    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    emit_srt(records, args.out)
-    json_out = os.path.splitext(args.out)[0] + ".json"
-    emit_json_rich(records, json_out)
+    # 4. Route Output Files Cleanly
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ext = out_path.suffix.lower()
+    base_stem = out_path.parent / out_path.stem
+
+    fmt = args.format
+    if fmt == "auto":
+        if ext == ".json":
+            fmt = "json"
+        elif ext == ".srt":
+            fmt = "srt"
+        else:
+            fmt = "both"
+
+    repeats = sum(1 for r in records if r.get("is_repeat", False))
+    print(f"✅ Alignment Complete: {len(records):,} words aligned ({repeats} repeats detected).")
+
+    if fmt in ("json", "both"):
+        json_file = str(out_path if ext == ".json" else base_stem.with_suffix(".json"))
+        emit_json_rich(records, json_file)
+        print(f"   JSON: {json_file} ({os.path.getsize(json_file):,} bytes)")
+
+    if fmt in ("srt", "both"):
+        srt_file = str(out_path if ext == ".srt" else base_stem.with_suffix(".srt"))
+        emit_srt(records, srt_file)
+        print(f"   SRT:  {srt_file} ({os.path.getsize(srt_file):,} bytes)")
 
 
 if __name__ == "__main__":

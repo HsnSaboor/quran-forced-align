@@ -195,7 +195,7 @@ def run_streaming_log_probs(sess, feats, output_dtype=np.float64):
     return log_probs, seconds_per_output_frame
 
 
-def run_streaming_log_probs_cuda_iobinding(sess, feats, device_id=0):
+def run_streaming_log_probs_cuda_iobinding(sess, feats, device_id=0, return_gpu_tensor=False):
     """CUDA-EP-only variant of `run_streaming_log_probs`, using onnxruntime's
     IO Binding API (`session.io_binding()`) to keep every cache tensor
     resident on the GPU across the whole chunk loop, instead of round-
@@ -297,17 +297,6 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
     n_chunks_max = max(n_chunks_per_stream)
 
     # Pre-assemble all chunks across all streams into a single contiguous host buffer
-    all_chunks_host = np.zeros((n_chunks_max, N, segment, feat_dim), dtype=np.float32)
-    for i, feats in enumerate(feats_list):
-        T_raw = feats.shape[0]
-        for c in range(n_chunks_per_stream[i]):
-            p = c * offset
-            rem = T_raw - p
-            if rem >= segment:
-                all_chunks_host[c, i] = feats[p:p + segment]
-            elif rem > 0:
-                all_chunks_host[c, i, :rem] = feats[p:]
-
     try:
         import torch
         has_torch_cuda = torch.cuda.is_available()
