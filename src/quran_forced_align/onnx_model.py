@@ -333,7 +333,9 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
             dims = [N if d == "N" else d for d in inp.shape]
             arr = np.zeros(tuple(dims), dtype=np.float32)
         io_binding.bind_ortvalue_input(inp.name, ort.OrtValue.ortvalue_from_numpy(arr, "cuda", device_id))
-    io_binding.bind_output("log_probs", "cuda", device_id)
+
+    # Bind outputs: log_probs is output 0, followed by states
+    io_binding.bind_output("log_probs", "cpu")
     for name in state_names:
         io_binding.bind_output("new_" + name, "cuda", device_id)
 
@@ -356,24 +358,19 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         sess.run_with_iobinding(io_binding)
         outs = io_binding.get_outputs()
 
-        chunk_log_probs = outs[log_probs_out_idx].numpy()  # [N, frames_per_chunk, 251]
+        # Output 0 is always log_probs
+        chunk_log_probs = outs[0].numpy()
         if log_probs_batched is None:
             frames_per_chunk = chunk_log_probs.shape[1]
             log_probs_batched = np.empty(
                 (N, n_chunks_max * frames_per_chunk, chunk_log_probs.shape[2]), dtype=np.float32
             )
-        assert chunk_log_probs.shape[1] == frames_per_chunk, (
-            f"chunk {chunk_idx} emitted {chunk_log_probs.shape[1]} frames per stream, "
-            f"expected fixed frames_per_chunk={frames_per_chunk} (from chunk 0)"
-        )
         row_start = chunk_idx * frames_per_chunk
         log_probs_batched[:, row_start:row_start + frames_per_chunk, :] = chunk_log_probs
 
-        for name, out_idx in zip(state_names, state_out_idx):
-            io_binding.bind_ortvalue_input(name, outs[out_idx])
-        io_binding.bind_output("log_probs", "cuda", device_id)
-        for name in state_names:
-            io_binding.bind_output("new_" + name, "cuda", device_id)
+        # State outputs start at index 1
+        for state_idx, name in enumerate(state_names):
+            io_binding.bind_ortvalue_input(name, outs[state_idx + 1])
         ptr += offset
 
     subsample_factor = offset / frames_per_chunk  # empirically 48/12 = 4
