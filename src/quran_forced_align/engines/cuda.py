@@ -171,79 +171,31 @@ class CUDAEngine:
             )
 
     def run_inference(self, feats):
-        # IO-Binding variant (see onnx_model.run_streaming_log_probs_cuda_iobinding's
-        # docstring): keeps every cache tensor GPU-resident across the whole
-        # chunk loop instead of round-tripping each of the ~97 cache
-        # tensors through host memory on every chunk via plain
-        # sess.run(None, feed) -- verified empirically byte-identical to
-        # that plain-numpy-I/O path and deterministic across repeated
-        # calls, at no additional risk. Always returns float32 (torchaudio's
-        # forced_align, called below, only accepts float32 log-probs
-        # anyway -- see that function's own docstring for why the CPU
-        # engine's float64 default doesn't apply to this engine).
-        log_probs, seconds_per_frame = run_streaming_log_probs_cuda_iobinding(self._session, feats)
-        # Cache this call's result so forced_align (below) can recognize a
-        # later repeat-detection call's log_probs argument as a SLICE of
-        # THIS array (see _as_device_tensor) and reuse the one resident GPU
-        # upload instead of re-uploading that slice's bytes from host on
-        # every repeat-detection candidate. Measured impact is small in
-        # practice (repeat-detection's H2D uploads total ~18ms out of a
-        # ~17s whole-surah run for a typical surah -- the acoustic-model
-        # inference above dominates wall-clock, not this), but it's a
-        # correct, zero-determinism-risk optimization, so it's applied
-        # unconditionally rather than gated behind a flag nobody would ever
-        # need to turn off.
-        self._last_log_probs_cpu = log_probs
-        self._last_log_probs_gpu = self._torch.as_tensor(log_probs, dtype=self._torch.float32, device=self._device)
+        log_probs, seconds_per_frame = run_streaming_log_probs_cuda_iobinding(
+            self._session, feats, return_gpu_tensor=True
+        )
+        self._last_log_probs_gpu = log_probs
+        self._last_log_probs_cpu = None
         return log_probs, seconds_per_frame
 
     def run_inference_batched(self, feats_list):
         """Batched-N sibling of `run_inference`: runs every surah in
         `feats_list` through ONE streaming chunk loop, stacked along the
         model's dynamic `N` axis, instead of `len(feats_list)` fully
-        separate `run_inference` calls -- see
-        `onnx_model.run_streaming_log_probs_batched_cuda_iobinding`'s
-        docstring for the full rationale, the ragged-length padding
-        scheme, and the empirically-verified determinism characterization
-        (batching introduces a tiny, decode-irrelevant numerical drift in
-        raw log_probs values; verified to never change any argmax or
-        forced-alignment decision across every case tested).
+        separate `run_inference` calls.
 
         Returns `(log_probs_list, seconds_per_frame)`; `log_probs_list[i]`
-        corresponds to `feats_list[i]`, already truncated to that stream's
-        own real (unpadded) length. Does NOT populate this engine's
-        single-stream GPU-residency cache (`_last_log_probs_cpu`/`_gpu`,
-        see `run_inference`/`_as_device_tensor`) -- callers doing batched
-        multi-surah alignment run each surah's OWN subsequent
-        `forced_align`/repeat-detection calls against its own
-        `log_probs_list[i]` slice sequentially after this call returns (the
-        alignment step, unlike inference, is not batched -- see this
-        module's other docstrings for why `torchaudio.functional.forced_align`
-        itself only supports batch_size==1), so each surah's own
-        `forced_align` call re-establishes that per-surah cache the normal
-        way when the caller next invokes this engine's `forced_align`.
+        corresponds to `feats_list[i]`, resident on GPU.
         """
-        return run_streaming_log_probs_batched_cuda_iobinding(self._session, feats_list)
+        return run_streaming_log_probs_batched_cuda_iobinding(
+            self._session, feats_list, return_gpu_tensor=True
+        )
 
     def run_inference_intra_surah_split(self, feats, silence_feature_frame_positions, max_splits=None):
         """Split THIS SINGLE surah's own acoustic-model inference into
         multiple warm-up-overlapped segments at real silence points, run
         via this engine's own batched-inference machinery, instead of one
-        fully-serial chunk loop -- see
-        `onnx_model.run_streaming_log_probs_intra_surah_split_cuda`'s
-        docstring for the full rationale, safety margin calibration, and
-        empirically-verified decode-level determinism characterization.
-
-        `silence_feature_frame_positions` are candidate silence-boundary
-        positions in FBANK-FEATURE-FRAME units (see
-        `silence.find_silence_midpoints`'s raw-audio-sample-unit output
-        and `pipeline.align_surah`'s conversion between the two units --
-        this engine only ever sees already-extracted features, never raw
-        audio, so it cannot run silence detection itself; the caller must
-        run it on the raw audio and convert units before calling this
-        method). An empty list (e.g. `pipeline.align_surah` found no
-        usable silence gap in this surah's audio) makes this method
-        behave exactly like plain `run_inference`.
+        fully-serial chunk loop.
         """
         meta = self._session.get_modelmeta().custom_metadata_map
         offset_frames = int(meta.get("decode_chunk_len", 48))
@@ -256,13 +208,15 @@ class CUDAEngine:
         )
 
         if not split_chunk_indices:
-            log_probs, seconds_per_frame = run_streaming_log_probs_cuda_iobinding(self._session, feats)
+            log_probs, seconds_per_frame = run_streaming_log_probs_cuda_iobinding(
+                self._session, feats, return_gpu_tensor=True
+            )
         else:
             log_probs, seconds_per_frame = run_streaming_log_probs_intra_surah_split_cuda(
-                self._session, feats, split_chunk_indices
+                self._session, feats, split_chunk_indices, return_gpu_tensor=True
             )
-        self._last_log_probs_cpu = log_probs
-        self._last_log_probs_gpu = self._torch.as_tensor(log_probs, dtype=self._torch.float32, device=self._device)
+        self._last_log_probs_gpu = log_probs
+        self._last_log_probs_cpu = None
         return log_probs, seconds_per_frame
 
     def run_inference_batched_with_intra_surah_split(self, feats_list, silence_feature_frame_positions_list):
@@ -271,52 +225,12 @@ class CUDAEngine:
         segments at real silence points, then flattens ALL surahs' ALL
         segments into ONE giant cross-surah-and-cross-segment batch
         through a SINGLE `run_streaming_log_probs_batched_cuda_iobinding`
-        call -- the maximum-parallelism combination of this package's two
-        batch-axis GPU optimizations, for the target workload of
-        100+ reciters x 114 surahs where both many independent surahs AND
-        each individual surah benefit from batching.
-
-        `silence_feature_frame_positions_list[i]` are surah `i`'s own
-        candidate silence-boundary positions (FBANK-FEATURE-FRAME units,
-        same convention as `run_inference_intra_surah_split` -- see that
-        method's docstring for the unit-conversion requirement), matching
-        `feats_list[i]`.
-
-        Returns `(log_probs_list, seconds_per_frame)`, matching
-        `run_inference_batched`'s contract: `log_probs_list[i]` is surah
-        `i`'s own fully-stitched (warm-up-trimmed, segment-concatenated)
-        [T_i, 251] array -- indistinguishable, from the caller's
-        perspective, from what `run_inference_intra_surah_split` would
-        have returned for that ONE surah alone, except that every surah's
-        segments (and every OTHER surah's segments) were computed in the
-        SAME underlying batched inference call rather than N separate
-        calls.
-
-        DETERMINISM: this combination stacks BOTH of this package's
-        already-independently-verified sources of tiny, decode-
-        irrelevant floating-point drift (cross-surah batch-position
-        drift, ~1e-4 magnitude; intra-surah recursion-length drift, also
-        ~1e-4 magnitude) -- see `run_streaming_log_probs_batched_cuda_iobinding`'s
-        and `run_streaming_log_probs_intra_surah_split_cuda`'s docstrings
-        for each in isolation. Stacking two independently-harmless
-        floating-point perturbations of the same tiny order of magnitude
-        is expected, by the same argument each was individually verified
-        under (CTC forced alignment only needs the correct phoneme to
-        have SOME probability mass at roughly the right place, not to
-        win by more than a fraction of a nat), to remain equally
-        harmless -- verified empirically end-to-end (word/timing/repeat
-        output compared against the fully-serial unbatched-unsplit
-        baseline, not just log_probs closeness) before this method is
-        used in `pipeline.align_surahs_batched`.
+        call.
         """
         meta = self._session.get_modelmeta().custom_metadata_map
         offset_frames = int(meta.get("decode_chunk_len", 48))
         segment_frames = int(meta.get("T", 61))
 
-        # Build every surah's own segment list independently, then flatten
-        # ALL surahs' ALL segments into one flat list for a single batched
-        # call -- `seg_bounds_per_surah`/`segment_counts` remember how to
-        # split the flat results back out per surah afterward.
         all_segment_feats = []
         seg_bounds_per_surah = []
         for feats, silence_positions in zip(feats_list, silence_feature_frame_positions_list):
@@ -328,9 +242,6 @@ class CUDAEngine:
                 silence_positions, offset_frames, n_chunks_total
             )
             if not split_chunk_indices:
-                # No usable split for this surah -- it contributes exactly
-                # ONE "segment" (itself, unsplit, no warm-up needed since
-                # it already starts at chunk 0) to the flattened batch.
                 segment_feats = [feats]
                 seg_bounds = [(0, n_chunks_total, 0)]
             else:
@@ -341,7 +252,7 @@ class CUDAEngine:
             all_segment_feats.extend(segment_feats)
 
         all_log_probs, seconds_per_frame = run_streaming_log_probs_batched_cuda_iobinding(
-            self._session, all_segment_feats
+            self._session, all_segment_feats, return_gpu_tensor=True
         )
 
         log_probs_list = []
@@ -355,15 +266,12 @@ class CUDAEngine:
         return log_probs_list, seconds_per_frame
 
     def _as_device_tensor(self, log_probs):
-        """Return `log_probs` (or, if it's a numpy VIEW into the array from
-        the most recent `run_inference` call -- exactly what every
-        repeat-detection candidate window is, see `repeats/candidate.py`'s
-        `log_probs[window_start:window_end + 1]` -- the corresponding SLICE
-        of that call's already-resident GPU tensor) as a GPU tensor,
-        without a redundant host->device upload for the already-resident
-        case.
+        """Return `log_probs` (or if it's already a GPU tensor or slice) as a GPU tensor,
+        without redundant host->device uploads.
         """
         torch = self._torch
+        if isinstance(log_probs, torch.Tensor):
+            return log_probs if log_probs.device == self._device else log_probs.to(self._device)
         if self._last_log_probs_cpu is not None and log_probs.base is self._last_log_probs_cpu:
             full = log_probs.base
             offset_rows = (log_probs.ctypes.data - full.ctypes.data) // full[0].nbytes
@@ -381,20 +289,23 @@ class CUDAEngine:
             return None, None, None
 
         ext = build_ext(ref_ids, blank_id)
-        log_probs_t = self._as_device_tensor(log_probs).unsqueeze(0)
+        if isinstance(log_probs, torch.Tensor):
+            log_probs_t = log_probs if log_probs.device == self._device else log_probs.to(self._device)
+            if log_probs_t.dim() == 2:
+                log_probs_t = log_probs_t.unsqueeze(0)
+        else:
+            log_probs_t = self._as_device_tensor(log_probs).unsqueeze(0)
+
         targets_t = torch.as_tensor(ref_ids, dtype=torch.int32, device=self._device).unsqueeze(0)
 
         try:
             aligned_tokens, scores = taf.forced_align(log_probs_t, targets_t, blank=blank_id)
         except RuntimeError:
-            # torchaudio raises (rather than returning a sentinel) when the
-            # reference cannot fit in this many frames -- normalize to this
-            # module's documented (None, None, None) contract, matching
-            # every other engine/caller (see this module's docstring).
             return None, None, None
 
-        aligned_tokens_np = aligned_tokens[0].to(torch.int64).cpu().numpy()
-        path = _aligned_labels_to_state_path(aligned_tokens_np, ext, blank_id)
+        ext_t = torch.as_tensor(ext, dtype=torch.int64, device=self._device)
+        path_t = _aligned_labels_to_state_path(aligned_tokens[0].to(torch.int64), ext_t, blank_id)
+        path = path_t.cpu().numpy() if hasattr(path_t, "cpu") else path_t
         margins = _per_frame_runner_up_margins(torch, log_probs_t[0], aligned_tokens[0])
         return ext, path, margins
 
@@ -402,86 +313,65 @@ class CUDAEngine:
 def _aligned_labels_to_state_path(aligned_tokens, ext, blank_id):
     """Convert torchaudio's raw-label-per-frame `aligned_tokens` into this
     package's blank-interleaved extended-trellis-state-per-frame `path`
-    convention (state 2*p is the blank before ref_ids[p], state 2*p+1 is
-    the label state for ref_ids[p]) -- fully vectorized (no Python loop
-    over T), which matters since T is up to ~175,000 for the largest
-    surah. `ext` (the blank-interleaved extended state sequence this
-    package's other engine also builds via `trellis.build_ext`) is passed
-    in rather than rebuilt from `ref_ids` here, since the caller
-    (`CUDAEngine.forced_align`) already has it and every consumer of this
-    function's output needs the SAME `ext` array for its own `ext[path]`
-    lookups anyway.
-
-    Exploits the same rule torchaudio's own tutorial documents for
-    telling repeated-adjacent labels apart (see this module's docstring
-    and `torchaudio.functional.merge_tokens`'s documented behaviour): a
-    frame starts a NEW occurrence of a label iff that label differs from
-    blank AND either the previous frame was blank or the previous frame's
-    label was different. The running count of "new occurrence starts" IS
-    the 0-indexed position into `ref_ids` this frame's label state
-    corresponds to; a blank frame's state is twice that running count
-    (the blank immediately before the NEXT not-yet-started label), and a
-    label frame's state is twice (running_count - 1) + 1 (the label state
-    for the occurrence that just started or is continuing).
-
-    Verified empirically (on a live T4 GPU session, across multiple
-    problem sizes up to Al-Baqarah scale) that `build_ext(ref_ids,
-    blank_id)[path] == aligned_tokens` for every frame under this
-    reconstruction, and that the resulting `path` is monotonic
-    non-decreasing (a structural requirement every downstream consumer,
-    e.g. `trellis.frame_spans_from_path`, already assumes). That
-    equivalence is re-checked below on every real call (not just in
-    tests): unlike the CPU engine's backtrace (an algebraic identity
-    re-derived from the DP's own recorded `alpha` array, which cannot
-    diverge from what the forward pass actually computed), this is a
-    post-hoc reconstruction with no closed-loop guarantee of its own --
-    if `torchaudio.functional.forced_align` ever returned labels out of
-    `ref_ids`'s order (a contract violation on its part, not expected in
-    normal use, but not something this function can rule out on its own),
-    this reconstruction would silently produce a state path that doesn't
-    correspond to `aligned_tokens` at all. Failing loudly here costs one
-    O(T) array comparison, negligible next to the O(T) work already done
-    to build `path`.
+    convention. Supports both GPU torch.Tensor and numpy.ndarray inputs
+    fully vectorized.
     """
-    is_blank = aligned_tokens == blank_id
-    prev_labels = np.empty_like(aligned_tokens)
-    prev_labels[0] = blank_id  # sentinel: frame -1 counts as blank
-    prev_labels[1:] = aligned_tokens[:-1]
-    prev_is_blank = np.empty_like(is_blank)
-    prev_is_blank[0] = True
-    prev_is_blank[1:] = is_blank[:-1]
+    if type(aligned_tokens).__module__.startswith("torch"):
+        import torch
+        is_blank = aligned_tokens == blank_id
+        prev_labels = torch.empty_like(aligned_tokens)
+        prev_labels[0] = blank_id
+        prev_labels[1:] = aligned_tokens[:-1]
+        prev_is_blank = torch.empty_like(is_blank)
+        prev_is_blank[0] = True
+        prev_is_blank[1:] = is_blank[:-1]
 
-    is_new_occurrence = (~is_blank) & (prev_is_blank | (aligned_tokens != prev_labels))
-    occurrence_count = np.cumsum(is_new_occurrence)
-    path = np.where(is_blank, 2 * occurrence_count, 2 * (occurrence_count - 1) + 1).astype(np.int64)
+        is_new_occurrence = (~is_blank) & (prev_is_blank | (aligned_tokens != prev_labels))
+        occurrence_count = torch.cumsum(is_new_occurrence.to(torch.int64), dim=0)
+        path = torch.where(is_blank, 2 * occurrence_count, 2 * (occurrence_count - 1) + 1)
 
-    if not np.array_equal(ext[path], aligned_tokens):
-        raise RuntimeError(
-            "engines.cuda.CUDAEngine: torchaudio.functional.forced_align returned a label "
-            "sequence that doesn't correspond to any valid position in ref_ids's order -- "
-            "this indicates a contract violation in forced_align's output (see "
-            "_aligned_labels_to_state_path's docstring), not a normal-use failure"
-        )
-    return path
+        ext_t = ext if type(ext).__module__.startswith("torch") else torch.as_tensor(ext, dtype=torch.int64, device=aligned_tokens.device)
+
+        if not bool((ext_t[path] == aligned_tokens).all()):
+            raise RuntimeError(
+                "engines.cuda.CUDAEngine: torchaudio.functional.forced_align returned a label "
+                "sequence that doesn't correspond to any valid position in ref_ids's order -- "
+                "this indicates a contract violation in forced_align's output (see "
+                "_aligned_labels_to_state_path's docstring), not a normal-use failure"
+            )
+        return path
+    else:
+        is_blank = aligned_tokens == blank_id
+        prev_labels = np.empty_like(aligned_tokens)
+        prev_labels[0] = blank_id  # sentinel: frame -1 counts as blank
+        prev_labels[1:] = aligned_tokens[:-1]
+        prev_is_blank = np.empty_like(is_blank)
+        prev_is_blank[0] = True
+        prev_is_blank[1:] = is_blank[:-1]
+
+        is_new_occurrence = (~is_blank) & (prev_is_blank | (aligned_tokens != prev_labels))
+        occurrence_count = np.cumsum(is_new_occurrence)
+        path = np.where(is_blank, 2 * occurrence_count, 2 * (occurrence_count - 1) + 1).astype(np.int64)
+
+        if not np.array_equal(ext[path], aligned_tokens):
+            raise RuntimeError(
+                "engines.cuda.CUDAEngine: torchaudio.functional.forced_align returned a label "
+                "sequence that doesn't correspond to any valid position in ref_ids's order -- "
+                "this indicates a contract violation in forced_align's output (see "
+                "_aligned_labels_to_state_path's docstring), not a normal-use failure"
+            )
+        return path
 
 
 def _per_frame_runner_up_margins(torch, log_probs_2d, aligned_tokens_1d):
     """Per-frame `chosen - runner_up` log-probability gap over the FULL
-    emission distribution, computed once for every frame with two fused
-    GPU ops (`torch.topk` + a `where`) -- see this module's docstring
-    ("MARGIN SEMANTICS DIFFER...") for why this is the CUDA engine's
-    analogue of the CPU engine's DP-backtrace margin, not the same
-    quantity.
-
-    `margins[0]` is set to +inf, matching every engine's "no meaningful
-    margin at the very first frame" convention (there is no frame -1 to
-    have disagreed with).
+    emission distribution, computed with fused GPU ops.
     """
     top2_vals = torch.topk(log_probs_2d, k=2, dim=-1).values
     top1_val, top2_val = top2_vals[:, 0], top2_vals[:, 1]
     chosen_val = log_probs_2d.gather(1, aligned_tokens_1d.to(torch.int64).unsqueeze(1)).squeeze(1)
-    is_chosen_top1 = torch.isclose(chosen_val, top1_val)
+    is_chosen_top1 = chosen_val >= (top1_val - 1e-6)
     margin = torch.where(is_chosen_top1, top1_val - top2_val, chosen_val - top1_val)
+    margin[0] = float("inf")
     margins = margin.to(torch.float64).cpu().numpy()
-    margins[0] = np.inf
     return margins

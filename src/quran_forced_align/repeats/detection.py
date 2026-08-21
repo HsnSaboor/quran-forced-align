@@ -324,7 +324,10 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
         window_start_widest = max(0, window_start_widest)
         if window_end <= window_start_widest:
             continue
-        window_ids = np.argmax(log_probs[window_start_widest:window_end + 1], axis=-1)
+        if isinstance(log_probs, np.ndarray):
+            window_ids = np.argmax(log_probs[window_start_widest:window_end + 1], axis=-1)
+        else:
+            window_ids = log_probs[window_start_widest:window_end + 1].argmax(-1).cpu().numpy()
 
         for K in range(1, k_max + 1):
             j0 = i - K + 1
@@ -388,12 +391,12 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
             # decode.token_id_levenshtein_ratio's docstring).
             ids = window_ids[window_start - window_start_widest:]
             decoded_ids = _collapse_ctc_ids(ids, blank_id)
-            ratio_doubled = token_id_levenshtein_ratio(decoded_ids, doubled_ids, min_ratio=FREE_DECODE_MIN_RATIO_DOUBLED)
-            if ratio_doubled < FREE_DECODE_MIN_RATIO_DOUBLED:
-                continue
-            ratio_single = token_id_levenshtein_ratio(decoded_ids, phrase_token_ids, min_ratio=ratio_doubled - FREE_DECODE_MIN_MARGIN)
-            if ratio_doubled - ratio_single < FREE_DECODE_MIN_MARGIN:
-                continue
+            ratio_doubled = token_id_levenshtein_ratio(decoded_ids, doubled_ids, min_ratio=0.0)
+            ratio_single = token_id_levenshtein_ratio(decoded_ids, phrase_token_ids, min_ratio=0.0)
+            free_decode_pass = (
+                ratio_doubled >= FREE_DECODE_MIN_RATIO_DOUBLED
+                and (ratio_doubled - ratio_single) >= FREE_DECODE_MIN_MARGIN
+            )
 
             cand = _repeat_window_candidate(
                 engine, word_indices, cues, log_probs, combined_token_ids, blank_id,
@@ -405,9 +408,7 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
 
             # Fix 2's acoustic-confidence gate -- see docstring. Reject this
             # K unless BOTH copies clear the floor; either copy alone being
-            # a weak mechanical artifact is disqualifying. Applied
-            # identically for every K so widening the search never lowers
-            # the bar, only the number of hypotheses tested against it.
+            # a weak mechanical artifact is disqualifying.
             avg1 = avg_logprob_along_path(
                 cand["window_log_probs"], cand["ext"], cand["path"],
                 cand["copy1_start_local"], cand["copy1_end_local"],
@@ -421,27 +422,20 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
                 continue
 
             # Fix 4's gap-artifact secondary reject -- see docstring point 4.
-            # A candidate that formally clears confidence_floor can STILL be
-            # the mechanical CTC-trellis artifact Fix 2 was written to catch
-            # (docstring point 2's "almost-exactly-constant ~0.04s gap...
-            # exactly the CTC trellis's mandatory blank-frame separator, not
-            # a genuine acoustic pause") if it only barely cleared the floor.
-            # Reject only when BOTH signals are present -- a minimal gap
-            # AND a marginal confidence margin -- so a 1-frame gap with a
-            # comfortably large margin (strong acoustic evidence) is not
-            # blanket-banned, and a wide, plausible gap is never touched by
-            # this check regardless of margin.
             gap_frames = cand["copy2_start_local"] - cand["copy1_end_local"]
             margin_above_floor = bilateral - confidence_floor
             if gap_frames <= GAP_ARTIFACT_MAX_FRAMES and margin_above_floor < GAP_ARTIFACT_MIN_MARGIN:
                 continue
 
-            # Tie-break rule (see docstring point 3): keep the K with the
-            # highest bilateral confidence; smaller K wins exact ties since
-            # we iterate K ascending and only replace `best` on a strict
-            # improvement.
-            if best is None or bilateral > best[2]:
-                best = (K, cand, bilateral, window_start)
+            if not free_decode_pass and (margin_above_floor < 0.3 or gap_frames <= GAP_ARTIFACT_MAX_FRAMES):
+                continue
+
+            # Tie-break rule (see docstring point 3): combine bilateral acoustic
+            # confidence with phrase length K (preferring complete phrase coverage
+            # over sub-phrases when both clear the acoustic confidence floor).
+            cand_score = bilateral + 0.25 * (K - 1)
+            if best is None or cand_score > best[2]:
+                best = (K, cand, cand_score, window_start)
 
         if best is None:
             continue

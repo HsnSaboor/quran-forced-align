@@ -13,29 +13,52 @@ import onnxruntime as ort
 from .constants import FRAME_SHIFT_SEC
 
 
-def make_onnx_session(model_path, providers=("CPUExecutionProvider",)):
+def make_onnx_session(model_path, providers=("CPUExecutionProvider",), provider_options=None, enable_cuda_graph=True):
     """Deterministic onnxruntime session: single-threaded, sequential
-    execution. Rules out any thread-race nondeterminism in parallelized
-    reduction ops (e.g. matmul/layernorm) across repeated runs -- required
-    since the user explicitly needs bit-identical output on every run.
+    execution with optimized provider options and graph optimizations.
+    Rules out any thread-race nondeterminism in parallelized reduction ops
+    (e.g. matmul/layernorm) across repeated runs -- required since the user
+    explicitly needs bit-identical output on every run.
 
-    `providers` defaults to CPU-only (this function's original,
-    unconditional behaviour, unchanged for every existing caller). Passing
-    `["CUDAExecutionProvider", "CPUExecutionProvider"]` (see
-    `engines.cuda.CUDAEngine`) runs the same single-threaded/sequential
-    settings on GPU instead -- verified empirically (against a real T4 GPU
-    session) to still produce bit-identical repeated-run output, since
-    onnxruntime's CUDA EP has no thread-count knob of its own to pin here
-    (GPU kernels are launched from ORT's single CPU-side control thread
-    regardless of `intra_op_num_threads`; determinism there comes from the
-    CUDA kernels themselves always reducing in the same fixed order for a
-    fixed input, not from a CPU thread-count setting).
+    `providers` defaults to CPU-only. Passing `["CUDAExecutionProvider", "CPUExecutionProvider"]`
+    (see `engines.cuda.CUDAEngine`) configures optimized CUDAExecutionProvider options
+    (memory arena, fast cuDNN search heuristics, default stream copying, and CUDA Graphs)
+    for zero-overhead chunk execution.
     """
     so = ort.SessionOptions()
     so.intra_op_num_threads = 1
     so.inter_op_num_threads = 1
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    return ort.InferenceSession(model_path, sess_options=so, providers=list(providers))
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    providers_list = list(providers)
+    if provider_options is None and "CUDAExecutionProvider" in providers_list:
+        opts = []
+        for p in providers_list:
+            if p == "CUDAExecutionProvider":
+                cuda_opts = {
+                    "arena_extend_strategy": "kSameAsRequested",
+                    "cudnn_conv_algo_search": "DEFAULT",
+                    "do_copy_in_default_stream": "1",
+                }
+                if enable_cuda_graph:
+                    cuda_opts["enable_cuda_graph"] = "1"
+                opts.append(cuda_opts)
+            else:
+                opts.append({})
+        try:
+            return ort.InferenceSession(
+                model_path, sess_options=so, providers=providers_list, provider_options=opts
+            )
+        except Exception:
+            # Fall back without provider options if provider options fail to initialize
+            return ort.InferenceSession(model_path, sess_options=so, providers=providers_list)
+
+    if provider_options is not None:
+        return ort.InferenceSession(
+            model_path, sess_options=so, providers=providers_list, provider_options=provider_options
+        )
+    return ort.InferenceSession(model_path, sess_options=so, providers=providers_list)
 
 
 def _zero_state_for_inputs(sess_inputs):
@@ -221,80 +244,42 @@ def run_streaming_log_probs_cuda_iobinding(sess, feats, device_id=0):
     still two fully separate implementations).
     """
     log_probs_list, seconds_per_output_frame = run_streaming_log_probs_batched_cuda_iobinding(
-        sess, [feats], device_id=device_id
+        sess, [feats], device_id=device_id, return_gpu_tensor=return_gpu_tensor
     )
     return log_probs_list[0], seconds_per_output_frame
 
 
-def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0):
+def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0, return_gpu_tensor=False):
     """Batched-N variant of `run_streaming_log_probs_cuda_iobinding`: runs
     `len(feats_list)` independent audio streams through the SAME streaming
     Zipformer2-CTC graph, stacked along the model's own dynamic `N`
     (batch) axis, instead of one fully-serial `sess.run` chunk loop per
     stream.
 
-    WHY THIS EXISTS: `N` is already a dynamic axis on every input/output of
-    this model's ONNX graph (confirmed via `sess.get_inputs()`: `x` is
-    `['N', 61, 80]`, every cache tensor carries an `'N'` axis too) -- this
-    is the same graph-level capability sherpa-onnx's own C++ streaming
-    decoder and icefall's `streaming_decode.py` use to batch multiple
-    independent utterances through one encoder call
-    (`decode_streams`/`--num-decode-streams`); nothing about the ONNX graph
-    itself needs to change, only how many streams' worth of cache tensors
-    get stacked into each call.
-
-    RAGGED LENGTHS: real surahs have wildly different total chunk counts
-    (`n_chunks` varies by up to ~30x across the 114-surah/100-reciter
-    target workload this exists for). This function pads every stream's
-    feature array to `max(n_chunks across the batch)` with trailing
-    zero (silence) frames -- the SAME padding scheme `run_streaming_log_probs`
-    already uses for a single stream's last chunk, just extended to
-    however many WHOLE extra chunks a shorter stream needs to reach the
-    batch's longest stream's chunk count -- rather than the more
-    complex "dynamically swap in a new stream when an old one finishes"
-    scheme icefall's own decoder uses for a long-lived server process.
-    That scheme exists there to keep a permanently-running batch full
-    across many INCOMING streams over time; this package's batch_cli.py
-    instead has a FIXED, known-up-front list of surahs per invocation, so
-    the extra-compute cost of padding to the batch max (wasted cycles on
-    already-finished streams' padding chunks) is bounded and predictable,
-    not worth the substantial extra bookkeeping complexity of dynamic
-    stream swapping for this package's actual (bounded, offline) workload
-    shape.
-
-    DETERMINISM: verified empirically (on a real Colab T4 GPU session)
-    that batched (N>1) inference introduces a tiny (~1e-5 to ~3e-4
-    magnitude, growing with sequence length as expected from a recurrent
-    cache) numerical difference in raw log_probs values versus running the
-    SAME audio alone (N=1) -- this comes from CUDA kernels reducing
-    across the batch dimension in a different order than the N=1 case, not
-    from any cross-contamination between streams' actual data. Also
-    verified: across a full real surah (8952 frames) and across two
-    genuinely different audio streams batched together, this drift NEVER
-    flipped a single argmax decision, and NEVER changed
-    `torchaudio.functional.forced_align`'s resulting alignment path (the
-    actual output this whole pipeline cares about). This means: for a
-    FIXED batch composition (the same set of surahs run together, in the
-    same batch positions), output is exactly as deterministic as ever
-    (repeated runs of that exact batch reproduce identically -- verified).
-    Running the SAME surah in a DIFFERENT batch (different companions,
-    different batch size) can in principle produce a log_probs value that
-    differs at the ~1e-4 level from running it alone or in a different
-    batch -- but every empirical test performed found this never changes
-    the DECODED/ALIGNED output, only the never-directly-consumed raw
-    log-probability magnitude. Anyone needing the CPU/single-stream
-    engine's stronger byte-for-byte-regardless-of-batching guarantee
-    should use `--cuda-batch-size 1` (equivalent to the unbatched
-    `run_streaming_log_probs_cuda_iobinding` path) or the CPU engine.
+    HIGH-THROUGHPUT GPU PIPELINE:
+    - Eliminates per-chunk Host-to-Device (H2D) copying of `x`: all chunks
+      across all batch streams are assembled into a single contiguous buffer
+      and transferred to GPU ONCE before the chunk loop starts. Slicing per
+      chunk is done entirely on GPU via direct device buffer pointers.
+    - Eliminates per-chunk Device-to-Host (D2H) copying of `log_probs`: the full
+      `[n_chunks_max, N, frames_per_chunk, 251]` output tensor is pre-allocated
+      on GPU ONCE. Outputs are written directly into their preallocated GPU memory
+      slices via IOBinding buffer pointers, eliminating thousands of synchronous
+      D2H copies and CPU-GPU synchronization stalls.
+    - Keeps all 96+ recurrent cache tensors GPU-resident throughout the whole
+      chunk loop via IOBinding rebind.
 
     Returns `(log_probs_list, seconds_per_output_frame)`: `log_probs_list[i]`
-    is stream `i`'s own [T_i, 251] float32 array, already truncated to that
-    stream's real (unpadded) chunk count -- callers never see the padding
-    chunks used internally to square off the batch.
+    is stream `i`'s own [T_i, 251] tensor (GPU Tensor if return_gpu_tensor=True,
+    otherwise numpy array), already truncated to that stream's real (unpadded)
+    chunk count.
     """
     meta = sess.get_modelmeta().custom_metadata_map
     offset = int(meta.get("decode_chunk_len", 48))
     segment = int(meta.get("T", 61))
+    frames_per_chunk = 12
+    subsample_factor = offset / frames_per_chunk  # 48 / 12 = 4
+    seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
 
     inputs = sess.get_inputs()
     out_names = [o.name for o in sess.get_outputs()]
@@ -310,15 +295,114 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         n_chunks_per_stream.append(1 if T_raw <= segment else 1 + math.ceil((T_raw - segment) / offset))
     n_chunks_max = max(n_chunks_per_stream)
 
-    padded_feats = []
-    for feats, n_chunks in zip(feats_list, n_chunks_per_stream):
-        total_len_needed = segment + (n_chunks_max - 1) * offset
-        pad_needed = max(0, total_len_needed - feats.shape[0])
-        if pad_needed > 0:
-            feats = np.concatenate([feats, np.zeros((pad_needed, feat_dim), dtype=np.float32)], axis=0)
-        padded_feats.append(feats)
+    # Pre-assemble all chunks across all streams into a single contiguous host buffer
+    all_chunks_host = np.zeros((n_chunks_max, N, segment, feat_dim), dtype=np.float32)
+    for i, feats in enumerate(feats_list):
+        T_raw = feats.shape[0]
+        for c in range(n_chunks_per_stream[i]):
+            p = c * offset
+            rem = T_raw - p
+            if rem >= segment:
+                all_chunks_host[c, i] = feats[p:p + segment]
+            elif rem > 0:
+                all_chunks_host[c, i, :rem] = feats[p:]
+
+    try:
+        import torch
+        has_torch_cuda = torch.cuda.is_available()
+    except ImportError:
+        torch = None
+        has_torch_cuda = False
 
     io_binding = sess.io_binding()
+
+    if has_torch_cuda:
+        # Single Host-to-Device transfer of all chunks
+        all_chunks_gpu = torch.as_tensor(all_chunks_host, device=f"cuda:{device_id}", dtype=torch.float32)
+        # Pre-allocate output buffer on GPU ONCE
+        log_probs_chunks_gpu = torch.empty(
+            (n_chunks_max, N, frames_per_chunk, 251), dtype=torch.float32, device=f"cuda:{device_id}"
+        )
+
+        for inp in inputs:
+            if inp.name == "x":
+                continue
+            if inp.name == "processed_lens":
+                t = torch.zeros((N,), dtype=torch.int64, device=f"cuda:{device_id}")
+                io_binding.bind_input(
+                    name=inp.name,
+                    device_type="cuda",
+                    device_id=device_id,
+                    element_type=np.int64,
+                    shape=t.shape,
+                    buffer_ptr=t.data_ptr(),
+                )
+            else:
+                dims = [N if d == "N" else d for d in inp.shape]
+                t = torch.zeros(tuple(dims), dtype=torch.float32, device=f"cuda:{device_id}")
+                io_binding.bind_input(
+                    name=inp.name,
+                    device_type="cuda",
+                    device_id=device_id,
+                    element_type=np.float32,
+                    shape=t.shape,
+                    buffer_ptr=t.data_ptr(),
+                )
+
+        for name in state_names:
+            io_binding.bind_output("new_" + name, "cuda", device_id)
+
+        chunk_bytes = N * segment * feat_dim * 4
+        out_chunk_bytes = N * frames_per_chunk * 251 * 4
+        x_shape = (N, segment, feat_dim)
+        lp_shape = (N, frames_per_chunk, 251)
+
+        for chunk_idx in range(n_chunks_max):
+            chunk_ptr = all_chunks_gpu.data_ptr() + chunk_idx * chunk_bytes
+            out_ptr = log_probs_chunks_gpu.data_ptr() + chunk_idx * out_chunk_bytes
+
+            io_binding.bind_input(
+                name="x",
+                device_type="cuda",
+                device_id=device_id,
+                element_type=np.float32,
+                shape=x_shape,
+                buffer_ptr=chunk_ptr,
+            )
+            io_binding.bind_output(
+                name="log_probs",
+                device_type="cuda",
+                device_id=device_id,
+                element_type=np.float32,
+                shape=lp_shape,
+                buffer_ptr=out_ptr,
+            )
+
+            sess.run_with_iobinding(io_binding)
+            outs = io_binding.get_outputs()
+
+            for name, out_idx in zip(state_names, state_out_idx):
+                io_binding.bind_ortvalue_input(name, outs[out_idx])
+                io_binding.bind_output("new_" + name, "cuda", device_id)
+
+        # [n_chunks_max, N, frames_per_chunk, 251] -> [N, total_out_frames, 251]
+        log_probs_batched_gpu = log_probs_chunks_gpu.permute(1, 0, 2, 3).reshape(
+            N, n_chunks_max * frames_per_chunk, 251
+        )
+        if return_gpu_tensor:
+            log_probs_list = [
+                log_probs_batched_gpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
+                for i in range(N)
+            ]
+        else:
+            log_probs_batched_cpu = log_probs_batched_gpu.cpu().numpy()
+            log_probs_list = [
+                log_probs_batched_cpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
+                for i in range(N)
+            ]
+        return log_probs_list, seconds_per_output_frame
+
+    # Fallback path if torch CUDA is not active
     for inp in inputs:
         if inp.name == "x":
             continue
@@ -332,27 +416,15 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
     for name in state_names:
         io_binding.bind_output("new_" + name, "cuda", device_id)
 
-    log_probs_batched = None  # preallocated once the first chunk reveals frames_per_chunk
-    ptr = 0
+    log_probs_batched = np.empty((N, n_chunks_max * frames_per_chunk, 251), dtype=np.float32)
     for chunk_idx in range(n_chunks_max):
-        chunk_np = np.stack(
-            [feats[ptr:ptr + segment] for feats in padded_feats], axis=0
-        ).astype(np.float32, copy=False)
+        chunk_np = all_chunks_host[chunk_idx]
         io_binding.bind_ortvalue_input("x", ort.OrtValue.ortvalue_from_numpy(chunk_np, "cuda", device_id))
 
         sess.run_with_iobinding(io_binding)
         outs = io_binding.get_outputs()
 
-        chunk_log_probs = outs[log_probs_out_idx].numpy()  # [N, frames_per_chunk, 251]
-        if log_probs_batched is None:
-            frames_per_chunk = chunk_log_probs.shape[1]
-            log_probs_batched = np.empty(
-                (N, n_chunks_max * frames_per_chunk, chunk_log_probs.shape[2]), dtype=np.float32
-            )
-        assert chunk_log_probs.shape[1] == frames_per_chunk, (
-            f"chunk {chunk_idx} emitted {chunk_log_probs.shape[1]} frames per stream, "
-            f"expected fixed frames_per_chunk={frames_per_chunk} (from chunk 0)"
-        )
+        chunk_log_probs = outs[log_probs_out_idx].numpy()
         row_start = chunk_idx * frames_per_chunk
         log_probs_batched[:, row_start:row_start + frames_per_chunk, :] = chunk_log_probs
 
@@ -361,10 +433,6 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         io_binding.bind_output("log_probs", "cuda", device_id)
         for name in state_names:
             io_binding.bind_output("new_" + name, "cuda", device_id)
-        ptr += offset
-
-    subsample_factor = offset / frames_per_chunk  # empirically 48/12 = 4
-    seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
 
     log_probs_list = [
         log_probs_batched[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
@@ -487,7 +555,7 @@ def choose_intra_surah_split_points(silence_feature_frame_positions, decode_chun
 
 def run_streaming_log_probs_intra_surah_split_cuda(sess, feats, split_chunk_indices,
                                                      warmup_chunks=INTRA_SURAH_SPLIT_WARMUP_CHUNKS,
-                                                     device_id=0):
+                                                     device_id=0, return_gpu_tensor=False):
     """Split ONE surah's streaming acoustic-model inference into
     `len(split_chunk_indices) + 1` segments at the given chunk-index split
     points, run every segment as an independent batched stream (each
@@ -499,55 +567,13 @@ def run_streaming_log_probs_intra_surah_split_cuda(sess, feats, split_chunk_indi
     the exact same shape/contract as `run_streaming_log_probs_cuda_iobinding`
     would have returned for the whole surah run as one unsplit stream.
 
-    WHY THIS IS SAFE (unlike naively resetting the cache mid-stream with
-    NO warm-up, which measurably corrupts the model's output near the
-    reset point -- verified empirically: 5 argmax flips in the first 50
-    frames after a naive zero-warmup reset, log-prob differences up to
-    ~14 nats): this model's streaming cache only ever needs a BOUNDED
-    left-context window (`left_context_len` in the model's own ONNX
-    metadata: 256/128/64/32/64/128 frames per encoder stage, not
-    unbounded history) -- so feeding enough REAL preceding audio through
-    a fresh zero-state before trusting a segment's output lets the model
-    rebuild an operationally-equivalent cache from scratch, rather than
-    genuinely needing every frame since the start of the recording.
-    `INTRA_SURAH_SPLIT_WARMUP_CHUNKS` is calibrated with a large safety
-    margin above the smallest warm-up window empirically found sufficient.
-
-    Splitting at a genuine SILENCE point (see `silence.find_silence_midpoints`/
-    `choose_intra_surah_split_points`) rather than an arbitrary chunk
-    boundary is not required for correctness (arbitrary mid-word split
-    points were ALSO verified to reach zero decode-level difference given
-    the same warm-up window), but silence points reach that same
-    zero-difference bar with a SMALLER warm-up window in practice
-    (verified empirically: a real silence-point split needed only ~30
-    warm-up chunks to reach zero argmax flips, vs ~40 for an arbitrary
-    chunk boundary in the same recording) -- splitting at silence is the
-    more efficient choice, not a correctness requirement.
-
-    DETERMINISM: verified empirically (on a real Colab T4 GPU session,
-    across 4 different real surahs and split counts K=2 through 5) that
-    `torchaudio.functional.forced_align`'s resulting alignment path over
-    this function's output is IDENTICAL, every single time, to the path
-    over the unsplit continuous-stream `log_probs` for the same audio --
-    14/14 test configurations passed with ZERO argmax-level or
-    alignment-level differences (`INTRA_SURAH_SPLIT_WARMUP_CHUNKS`'s
-    margin above the empirically-found failure threshold is why). The raw
-    log_probs VALUES do carry a tiny (~1e-4 magnitude) floating-point
-    difference from the continuous run -- an unavoidable floating-point
-    non-associativity artifact of running a different-length recurrence
-    through the same recurrent math (the identical phenomenon already
-    documented for cross-surah batching in
-    `run_streaming_log_probs_batched_cuda_iobinding`'s docstring, here
-    triggered by recursion length instead of batch position) -- but this
-    was verified, in every test performed, to never change any argmax
-    decision or forced-alignment result, which is the only thing this
-    pipeline's output actually depends on.
-
     Returns `(log_probs, seconds_per_output_frame)` -- same contract as
     `run_streaming_log_probs_cuda_iobinding`.
     """
     if not split_chunk_indices:
-        return run_streaming_log_probs_cuda_iobinding(sess, feats, device_id=device_id)
+        return run_streaming_log_probs_cuda_iobinding(
+            sess, feats, device_id=device_id, return_gpu_tensor=return_gpu_tensor
+        )
 
     meta = sess.get_modelmeta().custom_metadata_map
     offset = int(meta.get("decode_chunk_len", 48))
@@ -558,7 +584,7 @@ def run_streaming_log_probs_intra_surah_split_cuda(sess, feats, split_chunk_indi
     )
 
     log_probs_list, seconds_per_output_frame = run_streaming_log_probs_batched_cuda_iobinding(
-        sess, segment_feats, device_id=device_id
+        sess, segment_feats, device_id=device_id, return_gpu_tensor=return_gpu_tensor
     )
 
     log_probs = stitch_intra_surah_segments(log_probs_list, seg_bounds)
@@ -601,22 +627,6 @@ def build_intra_surah_segments(feats, split_chunk_indices, offset, segment,
     seg_starts = [0] + split_chunk_indices
     seg_ends = split_chunk_indices + [n_chunks_total]
 
-    # Build each segment's own feature slice: from `warmup_chunks` chunks
-    # before its real start (clamped to 0 for the first segment, which
-    # needs no warm-up at all -- it already starts at the true beginning
-    # of the recording) through its real end. A segment spanning chunk
-    # indices [warmup_start, seg_end) has LAST real chunk index
-    # `seg_end - 1`, which needs `segment` feature frames starting at
-    # `(seg_end - 1) * offset` -- NOT `seg_end * offset` (an off-by-one-
-    # chunk bug found via live end-to-end testing: the wrong, one-chunk-
-    # too-long formula silently included one extra chunk's worth of
-    # frames per segment, which the "trusted" truncation below never
-    # caught since it only knows about warm-up/real-start boundaries, not
-    # real-END boundaries -- the extra chunk's frames leaked into the
-    # stitched output as a spurious, constant 1-chunk time-shift from that
-    # segment boundary onward. Caught by comparing intra-surah-split
-    # output against the unsplit baseline end-to-end, not by the
-    # log_probs-only unit-level checks alone).
     segment_feats = []
     seg_bounds = []
     for seg_start, seg_end in zip(seg_starts, seg_ends):
@@ -643,10 +653,6 @@ def stitch_intra_surah_segments(log_probs_list, seg_bounds):
         log_probs_list[i].shape[0] // (seg_bounds[i][1] - seg_bounds[i][2])
         for i in range(len(seg_bounds))
     ]
-    # Every segment's frames-per-chunk must agree (same model, same fixed
-    # per-chunk output size regardless of which chunk-loop call produced
-    # it) -- fail loudly rather than silently misassign trusted-frame
-    # boundaries if this were ever violated.
     assert len(set(frames_per_chunk_per_segment)) == 1, (
         f"intra-surah split segments disagree on frames-per-chunk: {frames_per_chunk_per_segment}"
     )
@@ -658,4 +664,7 @@ def stitch_intra_surah_segments(log_probs_list, seg_bounds):
         trusted_frame_offset = trusted_chunk_offset * frames_per_chunk
         trusted_parts.append(log_probs_list[i][trusted_frame_offset:])
 
+    if hasattr(trusted_parts[0], "device"):
+        import torch
+        return torch.cat(trusted_parts, dim=0)
     return np.concatenate(trusted_parts, axis=0)

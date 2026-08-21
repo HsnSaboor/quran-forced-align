@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--surah", type=int, required=True)
     ap.add_argument("--audio", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--model", default="model/zipformer_p_arabic_v2.int8.onnx")
+    ap.add_argument("--model", default="model/zipformer_p_arabic_v3.int8.onnx")
     ap.add_argument("--tokens", default="model/tokens.txt")
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu",
                      help="forced-alignment execution engine: 'cpu' (default, deterministic ONNX "

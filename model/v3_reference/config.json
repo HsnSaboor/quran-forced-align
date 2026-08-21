@@ -1,0 +1,8 @@
+{
+ "model_type": "zipformer_ctc",
+ "framework": "k2-icefall",
+ "task": "automatic-speech-recognition",
+ "output": "arabic-phonemes",
+ "streaming": true,
+ "sample_rate": 16000
+}

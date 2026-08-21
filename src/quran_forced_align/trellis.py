@@ -64,6 +64,13 @@ def avg_logprob_along_path(log_probs, ext, path, start_frame, end_frame):
     """
     if end_frame < start_frame:
         return -np.inf
+    if not isinstance(log_probs, np.ndarray) and hasattr(log_probs, "is_cuda"):
+        import torch
+        frames = torch.arange(start_frame, end_frame + 1, device=log_probs.device)
+        symbols = ext[path[start_frame:end_frame + 1]]
+        symbols_t = torch.as_tensor(symbols, dtype=torch.int64, device=log_probs.device)
+        return float(log_probs[frames, symbols_t].mean().item())
     frames = np.arange(start_frame, end_frame + 1)
     symbols = ext[path[frames]]
     return float(np.mean(log_probs[frames, symbols]))
+

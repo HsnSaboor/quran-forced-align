@@ -156,13 +156,19 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log):
     every surah in a batch BEFORE the one batched inference call, without
     duplicating this logic.
 
+    `tokens_path` may be either a path string to tokens.txt or an already-loaded
+    `(tok2id, id2tok, blank_id, max_token_len)` tuple to avoid repeated disk reads.
+
     Returns `(tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples)`.
     `samples` (the raw 16kHz waveform) is returned alongside `feats` so
     `align_surah`'s intra-surah-split path can run silence detection on it
     without re-loading/re-decoding the audio file a second time.
     """
     log(f"[1/6] Building whole-surah word<->phoneme reference for surah {surah}...")
-    tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
+    if isinstance(tokens_path, tuple) and len(tokens_path) == 4:
+        tok2id, id2tok, blank_id, max_token_len = tokens_path
+    else:
+        tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
     combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len)
     log(f"      {len(word_slots)} words total, {len(combined_token_ids)} reference tokens")
 

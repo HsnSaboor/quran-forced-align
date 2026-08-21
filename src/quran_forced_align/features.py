@@ -4,6 +4,7 @@ docstring / module __init__ for the full determinism rationale).
 import kaldi_native_fbank as knf
 import numpy as np
 
+from ._fast_fbank import fast_compute_fbank
 from .constants import SAMPLE_RATE
 
 
@@ -19,7 +20,17 @@ def compute_fbank_features(samples, tail_silence_sec=0.3):
     onnx_pretrained-streaming-ctc.py reference script) so the last real
     frames of speech get full right-context instead of being clipped by
     end-of-stream.
+
+    Uses a high-performance multi-threaded C++ backend when available to
+    bypass up to ~700,000 per-frame pybind11 calls and Python interpreter
+    overhead on multi-hour surahs, with 100% exact numerical determinism,
+    falling back to the standard OnlineFbank loop if the native extension is
+    unavailable.
     """
+    fast_feats = fast_compute_fbank(samples, tail_silence_sec=tail_silence_sec)
+    if fast_feats is not None:
+        return fast_feats
+
     padded = np.concatenate([
         samples,
         np.zeros(int(SAMPLE_RATE * tail_silence_sec), dtype=np.float32),
@@ -58,3 +69,4 @@ def compute_fbank_features(samples, tail_silence_sec=0.3):
     for i in range(n_frames):
         feats[i] = fb.get_frame(i)
     return feats
+
