@@ -316,12 +316,22 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
     io_binding.clear_binding_inputs()
     io_binding.clear_binding_outputs()
 
-    # High-Throughput Pure GPU Pipeline with zero CPU sync
+    # High-Throughput Pure GPU Pipeline with zero CPU sync and direct data_ptr memory binding
     if has_torch_cuda:
         import torch
-        from torch.utils.dlpack import from_dlpack, to_dlpack
+        from torch.utils.dlpack import to_dlpack
         stacked_feats = np.stack(padded_feats, axis=0).astype(np.float32, copy=False)
         feats_gpu = torch.from_numpy(stacked_feats).to(f"cuda:{device_id}", non_blocking=True)
+        
+        vocab_size = 251
+        frames_per_chunk = 12
+        subsample_factor = offset / frames_per_chunk
+        seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
+        
+        # Preallocate contiguous GPU tensor for all emissions
+        log_probs_batched_gpu = torch.empty(
+            (N, n_chunks_max * frames_per_chunk, vocab_size), device=f"cuda:{device_id}", dtype=torch.float32
+        )
         
         # Pre-bind state inputs on GPU
         for inp in inputs:
@@ -334,11 +344,9 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
                 t_arr = torch.zeros(tuple(dims), dtype=torch.float32, device=f"cuda:{device_id}")
             io_binding.bind_ortvalue_input(inp.name, ort.OrtValue.from_dlpack(to_dlpack(t_arr)))
 
-        io_binding.bind_output("log_probs", "cuda", device_id)
         for name in state_names:
             io_binding.bind_output("new_" + name, "cuda", device_id)
 
-        log_probs_chunks = []
         ptr = 0
         t_chunk_start = time.perf_counter()
         for chunk_idx in range(n_chunks_max):
@@ -350,14 +358,13 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
                 print(f"      [GPU Zipformer2-CTC] Chunk {chunk_idx + 1:5d}/{n_chunks_max} ({pct:5.1f}%) | Elapsed: {el:5.1f}s | Speed: {rt_x:5.1f}x realtime", flush=True)
 
             chunk_slice = feats_gpu[:, ptr:ptr + segment, :].contiguous()
-            io_binding.bind_ortvalue_input("x", ort.OrtValue.from_dlpack(to_dlpack(chunk_slice)))
+            out_slice = log_probs_batched_gpu[:, chunk_idx * frames_per_chunk:(chunk_idx + 1) * frames_per_chunk, :]
+
+            io_binding.bind_input("x", "cuda", device_id, np.float32, [N, segment, 80], chunk_slice.data_ptr())
+            io_binding.bind_output("log_probs", "cuda", device_id, np.float32, [N, frames_per_chunk, vocab_size], out_slice.data_ptr())
 
             sess.run_with_iobinding(io_binding)
             outs = io_binding.get_outputs()
-
-            # Direct GPU dlpack slice
-            gpu_chunk = from_dlpack(outs[0].to_dlpack())
-            log_probs_chunks.append(gpu_chunk)
 
             # Rebind states on GPU
             for state_idx, name in enumerate(state_names):
@@ -365,10 +372,6 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
             ptr += offset
 
         torch.cuda.synchronize(device_id)
-        log_probs_batched_gpu = torch.cat(log_probs_chunks, dim=1)
-        frames_per_chunk = log_probs_chunks[0].shape[1]
-        subsample_factor = offset / frames_per_chunk
-        seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
 
         if return_gpu_tensor:
             log_probs_list = [
