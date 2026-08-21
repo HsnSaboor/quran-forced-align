@@ -156,8 +156,8 @@ class CUDAEngine:
         cuda_provider_options = {
             "device_id": 0,
             "arena_extend_strategy": "kSameAsRequested",
-            "gpu_mem_limit": 14 * 1024 * 1024 * 1024,
-            "cudnn_conv_algo_search": "EXHAUSTIVE",
+            "gpu_mem_limit": 4 * 1024 * 1024 * 1024,
+            "cudnn_conv_algo_search": "DEFAULT",
             "do_copy_in_default_stream": True,
         }
         self._session = make_onnx_session(
@@ -340,125 +340,14 @@ class CUDAEngine:
         if T < 1 or L < 1:
             return None, None, None
 
-        # Convert silence frame positions to output-frame coordinates (subsample factor = 4)
-        silence_out_frames = []
-        for f in silence_frame_positions:
-            f_out = f // 4 if f > T else f
-            if 0 < f_out < T:
-                silence_out_frames.append(int(f_out))
-        silence_out_frames = sorted(list(set(silence_out_frames)))
+        # Convert silence frame positions to output-frame coordinates (subsample factor = 4: 10ms -> 40ms)
+        silence_out_frames = sorted(list(set(int(f // 4) for f in silence_frame_positions if 0 < int(f // 4) < T)))
 
         if not silence_out_frames or len(silence_out_frames) < 2:
             return None, None, None
 
-        # Extract greedy CTC tokens and their emission frames (vectorized)
-        if isinstance(log_probs, torch.Tensor):
-            greedy_raw = torch.argmax(log_probs, dim=-1).cpu().numpy()
-        else:
-            greedy_raw = np.argmax(log_probs, axis=-1)
-
-        is_non_blank = (greedy_raw != blank_id)
-        is_diff = np.empty_like(is_non_blank)
-        is_diff[0] = is_non_blank[0]
-        is_diff[1:] = is_non_blank[1:] & (greedy_raw[1:] != greedy_raw[:-1])
-        greedy_frames = np.flatnonzero(is_diff)
-        greedy_tokens = greedy_raw[greedy_frames]
-
-        if len(greedy_tokens) < 10:
-            return None, None, None
-
-        # Reference word boundaries (end-token indices)
-        word_end_tokens = [w["token_positions"][-1] + 1 for w in word_slots if w.get("token_positions")]
-        if not word_end_tokens:
-            return None, None, None
-
-        # Anchor matching: find the exact word boundary for each silence split point
-        frame_boundaries = [0]
-        ref_boundaries = [0]
-        last_ref = 0
-
-        for f_bound in silence_out_frames:
-            if f_bound <= frame_boundaries[-1] + 30:
-                continue
-
-            n_emitted = int(np.searchsorted(greedy_frames, f_bound))
-            idx = int(np.searchsorted(word_end_tokens, n_emitted))
-            cand_start = max(0, idx - 6)
-            cand_end = min(len(word_end_tokens), idx + 7)
-            cands = [c for c in word_end_tokens[cand_start:cand_end] if c > last_ref]
-
-            if not cands:
-                continue
-
-            # Suffix match between greedy decoded tokens and reference tokens
-            suffix_len = min(20, n_emitted)
-            g_suffix = greedy_tokens[n_emitted - suffix_len : n_emitted]
-
-            best_cand = cands[0]
-            best_score = -1
-
-            for cand in cands:
-                cand_len = min(suffix_len, cand - last_ref)
-                ref_suffix = ref_ids[cand - cand_len : cand]
-                match = 0
-                for a, b in zip(reversed(g_suffix), reversed(ref_suffix)):
-                    if a == b:
-                        match += 1
-                    else:
-                        break
-                if match > best_score:
-                    best_score = match
-                    best_cand = cand
-
-            # Ensure candidate segment has enough frames: T_seg >= L_seg + 1
-            cur_f_len = f_bound - frame_boundaries[-1]
-            cur_l_len = best_cand - last_ref
-            if cur_f_len >= cur_l_len + 2 and cur_l_len > 0:
-                frame_boundaries.append(f_bound)
-                ref_boundaries.append(best_cand)
-                last_ref = best_cand
-
-        # Close final segment
-        if frame_boundaries[-1] < T:
-            frame_boundaries.append(T)
-            ref_boundaries.append(L)
-
-        if len(frame_boundaries) < 2:
-            return None, None, None
-
-        # Validate that all segments satisfy T_i >= L_i
-        sub_log_probs = []
-        sub_ref_ids = []
-        for i in range(len(frame_boundaries) - 1):
-            f_s, f_e = frame_boundaries[i], frame_boundaries[i + 1]
-            l_s, l_e = ref_boundaries[i], ref_boundaries[i + 1]
-            if (f_e - f_s) < (l_e - l_s) or (l_e - l_s) == 0:
-                # Segment invalid, fall back safely to whole-surah alignment
-                return None, None, None
-            sub_log_probs.append(log_probs[f_s:f_e])
-            sub_ref_ids.append(ref_ids[l_s:l_e])
-
-        results = self.forced_align_batched(sub_log_probs, sub_ref_ids, blank_id, compute_margins=compute_margins)
-
-        full_ext = build_ext(ref_ids, blank_id)
-        full_path = []
-        full_margins = []
-
-        for i, (ext_seg, path_seg, margins_seg) in enumerate(results):
-            if path_seg is None:
-                # Segment alignment failed, fallback
-                return None, None, None
-
-            l_start = ref_boundaries[i]
-            # Shift path values to point into the global ext array
-            full_path.append(path_seg + 2 * l_start)
-            if margins_seg is not None:
-                full_margins.append(margins_seg)
-
-        final_path = np.concatenate(full_path) if full_path else None
-        final_margins = np.concatenate(full_margins) if (full_margins and compute_margins) else None
-
-        return full_ext, final_path, final_margins
+        # Fall back to monolithic alignment for now to prevent OOM
+        return None, None, None
 
     def forced_align_batched(self, log_probs_list, ref_ids_list, blank_id, compute_margins=True):
         """Batched CTC forced alignment over B independent sequences simultaneously on CUDA."""
@@ -473,54 +362,62 @@ class CUDAEngine:
             return [(ext, path, margins)]
 
         exts = [build_ext(ref_ids, blank_id) for ref_ids in ref_ids_list]
-        input_lens = [lp.shape[0] for lp in log_probs_list]
-        target_lens = [len(ref_ids) for ref_ids in ref_ids_list]
-
-        T_max = max(input_lens)
-        L_max = max(target_lens)
         V = log_probs_list[0].shape[-1]
-
-        log_probs_batched = torch.full((B, T_max, V), -1e9, dtype=torch.float32, device=self._device)
-        targets_batched = torch.zeros((B, L_max), dtype=torch.int32, device=self._device)
-
-        for i in range(B):
-            lp = log_probs_list[i]
-            lp_t = lp if (isinstance(lp, torch.Tensor) and lp.device == self._device) else torch.as_tensor(lp, dtype=torch.float32, device=self._device)
-            log_probs_batched[i, :input_lens[i]] = lp_t
-            targets_batched[i, :target_lens[i]] = torch.as_tensor(ref_ids_list[i], dtype=torch.int32, device=self._device)
-
-        input_lengths_t = torch.tensor(input_lens, dtype=torch.int64, device=self._device)
-        target_lengths_t = torch.tensor(target_lens, dtype=torch.int64, device=self._device)
-
-        try:
-            aligned_tokens_batched, scores = taf.forced_align(
-                log_probs_batched, targets_batched,
-                input_lengths=input_lengths_t,
-                target_lengths=target_lengths_t,
-                blank=blank_id
-            )
-        except RuntimeError:
-            return [(exts[i], None, None) for i in range(B)]
-
-        if compute_margins:
-            top2_vals = torch.topk(log_probs_batched, k=2, dim=-1).values
-            top1_val, top2_val = top2_vals[:, :, 0], top2_vals[:, :, 1]
-            chosen_val = log_probs_batched.gather(2, aligned_tokens_batched.to(torch.int64).unsqueeze(2)).squeeze(2)
-            is_chosen_top1 = chosen_val >= (top1_val - 1e-6)
-            margins_batched = torch.where(is_chosen_top1, top1_val - top2_val, chosen_val - top1_val)
-            margins_batched[:, 0] = float("inf")
-        else:
-            margins_batched = None
-
         results = []
-        for i in range(B):
-            T_i = input_lens[i]
-            aligned_i = aligned_tokens_batched[i, :T_i]
-            ext_t = torch.as_tensor(exts[i], dtype=torch.int64, device=self._device)
-            path_t = _aligned_labels_to_state_path(aligned_i.to(torch.int64), ext_t, blank_id)
-            path = path_t.cpu().numpy() if hasattr(path_t, "cpu") else path_t
-            margins = margins_batched[i, :T_i].to(torch.float64).cpu().numpy() if compute_margins else None
-            results.append((exts[i], path, margins))
+        mini_batch_size = 32
+
+        for b_start in range(0, B, mini_batch_size):
+            b_end = min(B, b_start + mini_batch_size)
+            sub_lps = log_probs_list[b_start:b_end]
+            sub_refs = ref_ids_list[b_start:b_end]
+            sub_exts = exts[b_start:b_end]
+            sub_b = len(sub_lps)
+
+            sub_in_lens = [lp.shape[0] for lp in sub_lps]
+            sub_tgt_lens = [len(r) for r in sub_refs]
+            T_max_sub = max(sub_in_lens)
+            L_max_sub = max(sub_tgt_lens)
+
+            lp_sub = torch.full((sub_b, T_max_sub, V), -1e9, dtype=torch.float32, device=self._device)
+            tgt_sub = torch.zeros((sub_b, L_max_sub), dtype=torch.int32, device=self._device)
+
+            for i in range(sub_b):
+                lp = sub_lps[i]
+                lp_t = lp if (isinstance(lp, torch.Tensor) and lp.device == self._device) else torch.as_tensor(lp, dtype=torch.float32, device=self._device)
+                lp_sub[i, :sub_in_lens[i]] = lp_t
+                tgt_sub[i, :sub_tgt_lens[i]] = torch.as_tensor(sub_refs[i], dtype=torch.int32, device=self._device)
+
+            in_lengths_t = torch.tensor(sub_in_lens, dtype=torch.int64, device=self._device)
+            tgt_lengths_t = torch.tensor(sub_tgt_lens, dtype=torch.int64, device=self._device)
+
+            try:
+                aligned_tokens_sub, scores = taf.forced_align(
+                    lp_sub, tgt_sub,
+                    input_lengths=in_lengths_t,
+                    target_lengths=tgt_lengths_t,
+                    blank=blank_id
+                )
+            except RuntimeError:
+                return [(exts[k], None, None) for k in range(B)]
+
+            if compute_margins:
+                top2_vals = torch.topk(lp_sub, k=2, dim=-1).values
+                top1_val, top2_val = top2_vals[:, :, 0], top2_vals[:, :, 1]
+                chosen_val = lp_sub.gather(2, aligned_tokens_sub.to(torch.int64).unsqueeze(2)).squeeze(2)
+                is_chosen_top1 = chosen_val >= (top1_val - 1e-6)
+                margins_sub = torch.where(is_chosen_top1, top1_val - top2_val, chosen_val - top1_val)
+                margins_sub[:, 0] = float("inf")
+            else:
+                margins_sub = None
+
+            for i in range(sub_b):
+                T_i = sub_in_lens[i]
+                aligned_i = aligned_tokens_sub[i, :T_i]
+                ext_t = torch.as_tensor(sub_exts[i], dtype=torch.int64, device=self._device)
+                path_t = _aligned_labels_to_state_path(aligned_i.to(torch.int64), ext_t, blank_id)
+                path = path_t.cpu().numpy() if hasattr(path_t, "cpu") else path_t
+                margins = margins_sub[i, :T_i].to(torch.float64).cpu().numpy() if compute_margins else None
+                results.append((sub_exts[i], path, margins))
 
         return results
 

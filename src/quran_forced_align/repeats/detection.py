@@ -235,27 +235,13 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
         return cues
         
     import ctypes
-    from ..decode import _fast_ops
+    from ..decode import get_fast_ops
     
+    _fast_ops = get_fast_ops()
     if _fast_ops is None or not hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
         # Fallback to python (but it shouldn't happen)
         print("WARNING: C engine not found, repeat detection will fail!")
         return cues
-        
-    _fast_ops.fast_detect_and_fix_repeats_engine.argtypes = [
-        ctypes.c_int, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
-        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int8),
-        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
-        ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
-        ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
-        ctypes.c_float, ctypes.c_float, ctypes.c_float,
-        ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_int, ctypes.c_int,
-        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
-        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32)
-    ]
-    _fast_ops.fast_detect_and_fix_repeats_engine.restype = ctypes.c_int
 
     num_cues = len(cues)
     cue_starts = np.array([c["start_frame"] for c in cues], dtype=np.int32)

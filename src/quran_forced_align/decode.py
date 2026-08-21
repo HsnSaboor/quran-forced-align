@@ -17,48 +17,67 @@ import os
 from pathlib import Path
 import numpy as np
 
-# Load compiled C acceleration library if present
 _fast_ops = None
-try:
-    so_path = Path(__file__).parent / "_fast_ops.so"
-    if so_path.exists():
-        _fast_ops = ctypes.CDLL(str(so_path))
-        _fast_ops.fast_token_id_levenshtein_ratio.argtypes = [
-            ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
-            ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
-            ctypes.c_double,
-        ]
-        _fast_ops.fast_token_id_levenshtein_ratio.restype = ctypes.c_double
-        
-        if hasattr(_fast_ops, "fast_ctc_forced_align"):
-            _fast_ops.fast_ctc_forced_align.argtypes = [
-                ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
-                ctypes.POINTER(ctypes.c_int32), ctypes.c_int, ctypes.c_int,
-                ctypes.POINTER(ctypes.c_int32)
-            ]
-            _fast_ops.fast_ctc_forced_align.restype = ctypes.c_int
 
-        if hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
-            _fast_ops.fast_detect_and_fix_repeats_engine.argtypes = [
-                ctypes.c_int,
-                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
-                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
-                ctypes.POINTER(ctypes.c_int8),
-                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+def get_fast_ops():
+    """Return the loaded _fast_ops CDLL instance, attempting reload if necessary."""
+    global _fast_ops
+    if _fast_ops is not None and hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
+        return _fast_ops
+    for fname in ("_fast_ops_v2.so", "_fast_ops.so"):
+        try:
+            so_path = Path(__file__).parent / fname
+            if so_path.exists():
+                lib = ctypes.CDLL(str(so_path))
+                if hasattr(lib, "fast_detect_and_fix_repeats_engine"):
+                    _fast_ops = lib
+                    break
+                elif _fast_ops is None:
+                    _fast_ops = lib
+        except Exception:
+            pass
+    if _fast_ops is not None:
+        try:
+            _fast_ops.fast_token_id_levenshtein_ratio.argtypes = [
                 ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
-                ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
                 ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
-                ctypes.c_float, ctypes.c_float, ctypes.c_float,
-                ctypes.c_int, ctypes.c_float, ctypes.c_float,
-                ctypes.c_int, ctypes.c_int,
-                ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
-                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
-                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                ctypes.c_double,
             ]
-            _fast_ops.fast_detect_and_fix_repeats_engine.restype = ctypes.c_int
-except Exception:
-    _fast_ops = None
+            _fast_ops.fast_token_id_levenshtein_ratio.restype = ctypes.c_double
+            
+            if hasattr(_fast_ops, "fast_ctc_forced_align"):
+                _fast_ops.fast_ctc_forced_align.argtypes = [
+                    ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_int32), ctypes.c_int, ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_int32)
+                ]
+                _fast_ops.fast_ctc_forced_align.restype = ctypes.c_int
+
+            if hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
+                _fast_ops.fast_detect_and_fix_repeats_engine.argtypes = [
+                    ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                    ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                    ctypes.POINTER(ctypes.c_int8),
+                    ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                    ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
+                    ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                    ctypes.c_int, ctypes.c_float, ctypes.c_float,
+                    ctypes.c_int, ctypes.c_int,
+                    ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
+                    ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                    ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                    ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                ]
+                _fast_ops.fast_detect_and_fix_repeats_engine.restype = ctypes.c_int
+            return _fast_ops
+        except Exception:
+            pass
+    return _fast_ops
+
+_fast_ops = get_fast_ops()
 
 
 def _collapse_ctc_ids(ids, blank_id):
