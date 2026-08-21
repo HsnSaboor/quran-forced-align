@@ -235,7 +235,7 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
 
     t5_start = time.perf_counter()
     log("[5/6] Detecting + locally re-aligning repeats...")
-    min_word_dur_frames = MIN_WORD_DUR / seconds_per_frame
+    min_word_dur_frames = int(MIN_WORD_DUR / seconds_per_frame)
     cues = detect_and_fix_repeats(
         engine, cues, log_probs, combined_token_ids, blank_id, ext, path,
         anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,

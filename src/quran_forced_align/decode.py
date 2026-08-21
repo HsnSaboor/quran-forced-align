@@ -37,6 +37,26 @@ try:
                 ctypes.POINTER(ctypes.c_int32)
             ]
             _fast_ops.fast_ctc_forced_align.restype = ctypes.c_int
+
+        if hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
+            _fast_ops.fast_detect_and_fix_repeats_engine.argtypes = [
+                ctypes.c_int,
+                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_int8),
+                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
+                ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
+                ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                ctypes.c_int, ctypes.c_float, ctypes.c_float,
+                ctypes.c_int, ctypes.c_int,
+                ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
+                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+            ]
+            _fast_ops.fast_detect_and_fix_repeats_engine.restype = ctypes.c_int
 except Exception:
     _fast_ops = None
 

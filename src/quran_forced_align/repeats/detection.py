@@ -225,6 +225,7 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
        actual code path that will run, not an approximation of it. Applied
        identically for every K, same as every other gate.
     """
+
     if not cues:
         return cues
 
@@ -232,262 +233,124 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
     median = float(np.median(durations)) if len(durations) else 0.0
     if median <= 0:
         return cues
-
-    def high_cutoff(cue):
-        return high_ratio * (ayah_final_high_ratio_mult if cue.get("is_ayah_final") else 1.0)
-
-    def is_anomalous(cue):
-        d = cue["end_frame"] - cue["start_frame"]
-        return d < low_ratio * median or d > high_cutoff(cue) * median
-
-    # Precompute path log-probabilities in one single vectorized GPU/CPU operation
-    T = len(path)
-    if not isinstance(log_probs, np.ndarray) and hasattr(log_probs, "is_cuda"):
-        import torch
-        symbols = ext[path]
-        symbols_t = torch.as_tensor(symbols, dtype=torch.int64, device=log_probs.device)
-        path_logprobs = log_probs[torch.arange(T, device=log_probs.device), symbols_t].cpu().numpy()
-    else:
-        path_logprobs = log_probs[np.arange(T), ext[path]]
+        
+    import ctypes
+    from ..decode import _fast_ops
     
-    cum_logprobs = np.pad(np.cumsum(path_logprobs), (1, 0))
-
-    # Precompute CPU host array and greedy CTC argmax IDs over the entire surah in ONE operation
-    if isinstance(log_probs, np.ndarray):
-        log_probs_cpu = log_probs
-        full_greedy_ids = np.argmax(log_probs, axis=-1)
-    else:
-        log_probs_cpu = log_probs.cpu().numpy()
-        full_greedy_ids = np.argmax(log_probs_cpu, axis=-1)
-
-    def fast_avg_logprob(sf, ef):
-        if ef < sf:
-            return -np.inf
-        return float((cum_logprobs[ef + 1] - cum_logprobs[sf]) / (ef - sf + 1))
-
-    normal_avgs = [
-        fast_avg_logprob(c["start_frame"], c["end_frame"])
-        for c in cues if not is_anomalous(c)
+    if _fast_ops is None or not hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
+        # Fallback to python (but it shouldn't happen)
+        print("WARNING: C engine not found, repeat detection will fail!")
+        return cues
+        
+    _fast_ops.fast_detect_and_fix_repeats_engine.argtypes = [
+        ctypes.c_int, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int8),
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
+        ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int32), ctypes.c_int,
+        ctypes.c_float, ctypes.c_float, ctypes.c_float,
+        ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_int, ctypes.c_int,
+        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32)
     ]
+    _fast_ops.fast_detect_and_fix_repeats_engine.restype = ctypes.c_int
+
+    num_cues = len(cues)
+    cue_starts = np.array([c["start_frame"] for c in cues], dtype=np.int32)
+    cue_ends = np.array([c["end_frame"] for c in cues], dtype=np.int32)
+    cue_ayas = np.array([c["aya"] for c in cues], dtype=np.int32)
+    cue_suras = np.array([c["sura"] for c in cues], dtype=np.int32)
+    cue_is_ayah_final = np.array([1 if c.get("is_ayah_final") else 0 for c in cues], dtype=np.int8)
+    
+    cue_token_offsets = np.zeros(num_cues, dtype=np.int32)
+    cue_token_counts = np.zeros(num_cues, dtype=np.int32)
+    
+    for i, c in enumerate(cues):
+        if c["token_positions"]:
+            cue_token_offsets[i] = c["token_positions"][0]
+            cue_token_counts[i] = len(c["token_positions"])
+            
+    combined_token_ids_arr = np.array(combined_token_ids, dtype=np.int32)
+    
+    # log_probs
+    if hasattr(log_probs, "detach"):
+        log_probs_np = log_probs.detach().cpu().numpy().astype(np.float32, copy=False)
+    else:
+        log_probs_np = np.ascontiguousarray(log_probs, dtype=np.float32)
+        
+    T, V = log_probs_np.shape
+    full_greedy_ids = np.argmax(log_probs_np, axis=-1).astype(np.int32)
+    
+    # baseline confidence
+    def high_cutoff(c): return high_ratio * (ayah_final_high_ratio_mult if c.get("is_ayah_final") else 1.0)
+    def is_anomalous(c): 
+        d = c["end_frame"] - c["start_frame"]
+        return d < low_ratio * median or d > high_cutoff(c) * median
+    
+    path_logprobs = log_probs_np[np.arange(T), ext[path]]
+    cum_logprobs = np.pad(np.cumsum(path_logprobs), (1, 0))
+    def fast_avg_logprob(sf, ef): return float((cum_logprobs[ef + 1] - cum_logprobs[sf]) / (ef - sf + 1)) if ef >= sf else -np.inf
+    
+    normal_avgs = [fast_avg_logprob(c["start_frame"], c["end_frame"]) for c in cues if not is_anomalous(c)]
     baseline_avg = float(np.median(normal_avgs)) if normal_avgs else 0.0
     confidence_floor = baseline_avg - confidence_margin
-
-    n = len(cues)
-    consumed = set()           # word indices already spliced into an accepted fix
-    accepted_fixes = {}        # trigger index i -> (word_indices, candidate_dict, window_start)
+    
+    out_K = np.zeros(num_cues, dtype=np.int32)
+    out_window_start = np.zeros(num_cues, dtype=np.int32)
+    out_window_end = np.zeros(num_cues, dtype=np.int32)
+    out_path_offsets = np.zeros(num_cues, dtype=np.int32)
+    out_path_lengths = np.zeros(num_cues, dtype=np.int32)
+    
+    # 2*T should be plenty for disjoint repeat windows
+    out_paths = np.zeros(T * 2, dtype=np.int32)
+    
+    _max_rw = max_repeat_window_words if max_repeat_window_words is not None else -1
     margin = 2
-
-    for i, c in enumerate(cues):
-        if (i + 1) % 500 == 0 or i == n - 1:
-            print(f"      [Repeats] Scanned {i + 1:5d}/{n} words | {len(accepted_fixes)} repeat fixes accepted", flush=True)
-
-        if not is_anomalous(c) or not c["token_positions"]:
-            continue
-
-        # Natural structural bound on K: a real hifz-practice repeat never spans INTO a
-        # different ayah (a reciter repeats a phrase or a whole ayah, not "half of ayah N
-        # plus the start of ayah N+1"), so K can never usefully exceed the number of words
-        # from the start of word i's own ayah up to and including i. This makes the search
-        # correct for phrase repeats of ANY length (no arbitrary magic-number ceiling needed
-        # for correctness) while still keeping the search cheap: it's bounded by the ayah's
-        # own word count, and only runs at all on the rare words that already cleared the
-        # anomaly-duration gate above. `max_repeat_window_words`, if not None, is an
-        # additional hard cap purely for cost control in pathological cases -- see its
-        # definition (DEFAULT_MAX_REPEAT_WINDOW_WORDS).
-        words_left_in_aya = 1
-        while i - words_left_in_aya >= 0 and cues[i - words_left_in_aya]["aya"] == c["aya"] and cues[i - words_left_in_aya]["sura"] == c["sura"]:
-            words_left_in_aya += 1
-        k_max = words_left_in_aya
-        if max_repeat_window_words is not None:
-            k_max = min(k_max, max_repeat_window_words)
-
-        # PERFORMANCE NOTE (considered and rejected): this K-search loop is
-        # sequential, one engine.forced_align call per K, and each call's
-        # `break`/`continue` decisions below (via `consumed`, `best`) are
-        # genuinely data-dependent on EARLIER K's results within THIS same
-        # loop -- so overlapping K's forced_align calls across separate
-        # torch.cuda.Stream()s (to let independent GPU kernels run
-        # concurrently) was investigated as a CUDA-engine speedup and
-        # measured to give NO benefit: on a real T4 GPU session, 5
-        # sequential small forced_align calls (matching this loop's typical
-        # window/reference sizes) took ~11.7ms, vs ~12.2ms for the same 5
-        # calls issued on 5 separate streams (stream-management overhead
-        # slightly EXCEEDED any concurrency gain). This matches the
-        # underlying reason: each forced_align call is already a single,
-        # small, low-occupancy CUDA kernel launch (this whole K-search loop
-        # only runs at all for the rare anomalous words each surah has, and
-        # `k_max` is bounded by remaining words in the ayah -- a few dozen
-        # calls total per surah, not the acoustic model's ~14,600-chunk
-        # hot path) -- there's no idle GPU capacity at this scale for
-        # concurrent streams to usefully fill, and multi-stream execution
-        # would have added real complexity (synchronizing this loop's
-        # sequential `consumed`/`best` control flow against out-of-order
-        # completing streams) for a measured zero speedup. Left as a plain
-        # sequential loop.
-        best = None  # (K, candidate_dict, bilateral_confidence, window_start)
-
-        # window_end depends only on i, not K -- the K-word window always
-        # ends right before the next cue (or at the true end of the audio),
-        # and only window_start moves earlier as K grows. Computing it once
-        # here (instead of inside the loop, where it was identical every
-        # iteration) is what makes the per-word argmax reuse below
-        # well-defined.
-        window_end = cues[i + 1]["start_frame"] - 1 if i < n - 1 else log_probs.shape[0] - 1
-        window_end = min(log_probs.shape[0] - 1, window_end)
-
-        # PERFORMANCE (per-word argmax reuse): since window_start moves only
-        # EARLIER (smaller) as K grows, every K window is a suffix of the
-        # widest K=k_max window, so np.argmax over [window_start_widest,
-        # window_end] can be computed ONCE per anomalous word i instead of
-        # once per K -- argmax is elementwise per frame, and the CTC collapse
-        # (`decode._collapse_ctc_ids`) is a pure function of the id sequence
-        # with a fresh blank sentinel, so collapsing a suffix of this
-        # precomputed argmax is bit-identical to decoding that suffix alone.
-        # (Verified by tests; the widest window is what K=k_max would use,
-        # and if it is empty, every narrower K window is empty too, since
-        # window_start only grows from there -- so the whole K loop would
-        # `continue` on every iteration, and skipping it is equivalent.)
-        j0_widest = i - k_max + 1
-        window_start_widest = cues[j0_widest - 1]["end_frame"] + 1 if j0_widest > 0 else max(0, cues[j0_widest]["start_frame"] - margin)
-        window_start_widest = max(0, window_start_widest)
-        if window_end <= window_start_widest:
-            continue
-        window_ids = full_greedy_ids[window_start_widest:window_end + 1]
-
-        for K in range(1, k_max + 1):
-            j0 = i - K + 1
-            if j0 < 0:
-                break  # larger K only decreases j0 further -- no point continuing
-            if any(j in consumed for j in range(j0, i)):
-                break  # window would overlap an earlier accepted fix; larger K only makes it worse
-
-            # Local window: from the word just before the K-word candidate
-            # phrase to the word just after the anomalous trigger word i, so
-            # the re-alignment can only touch frames that aren't already
-            # claimed by a neighbouring word's cue. K=1 (j0 == i) reduces to
-            # exactly the original single-word window.
-            #
-            # At the surah/clip START boundary (j0 == 0, no previous cue),
-            # fall back to a small margin before this word's own start.
-            #
-            # At the surah/clip END boundary (i == n-1, no next cue) we
-            # canNOT fall back to a small margin past c["end_frame"]: that
-            # main-pass estimate is exactly what's unreliable for an
-            # ANOMALOUS word (that's the whole reason it's anomalous), and
-            # in the "repeat with no pause" case the main pass settles into
-            # trailing blank states early, understating end_frame by
-            # several seconds -- confirmed empirically (ground-truth
-            # test_C): the true second utterance's audio sat entirely past
-            # end_frame + margin, so every K's search window silently
-            # excluded the very audio it needed to find. Instead we extend
-            # all the way to the true end of the available audio
-            # (log_probs.shape[0] - 1) -- correct because at the true edge
-            # of the clip there is no neighbouring cue's frames to avoid
-            # touching, so there is no reason to hold back.
-            window_start = cues[j0 - 1]["end_frame"] + 1 if j0 > 0 else max(0, cues[j0]["start_frame"] - margin)
-            window_start = max(0, window_start)
-            if window_end <= window_start:
-                continue
-
-            word_indices = list(range(j0, i + 1))
-            phrase_token_ids, doubled_ids = build_phrase_ids(word_indices, cues, combined_token_ids)
-
-            # Fix 5's free-decode cross-check -- see docstring point 5. An
-            # UNCONSTRAINED greedy decode of this same window (no reference
-            # bias) must itself look more like TWO copies of the phrase
-            # than ONE, with real headroom, and must look reasonably like
-            # two copies on an absolute basis. Runs BEFORE the forced
-            # alignment below: the window slice and phrase id lists are
-            # both available here without any engine call, and rejecting
-            # early skips the expensive forced_align kernel launch for the
-            # majority of K values that would fail this gate anyway (the
-            # post-alignment re-check this gate used to be is gone -- the
-            # gate is a pure boolean rejection, so its position relative to
-            # the other gates cannot change the final decision, only which
-            # K values pay for the alignment). The Levenshtein calls use
-            # the provable `min_ratio` early-exit bound: `ratio_doubled`'s
-            # bound only skips when the true ratio is certainly below
-            # FREE_DECODE_MIN_RATIO_DOUBLED (and the exact value is kept
-            # otherwise, which the margin check needs); `ratio_single`'s
-            # bound only skips when the true ratio is certainly below
-            # ratio_doubled - FREE_DECODE_MIN_MARGIN, which is exactly the
-            # margin gate's rejection condition. Both bound decisions are
-            # provably identical to running the exact DPs (see
-            # decode.token_id_levenshtein_ratio's docstring).
-            ids = window_ids[window_start - window_start_widest:]
-            decoded_ids = _collapse_ctc_ids(ids, blank_id)
-            ratio_doubled = token_id_levenshtein_ratio(decoded_ids, doubled_ids, min_ratio=0.0)
-            ratio_single = token_id_levenshtein_ratio(decoded_ids, phrase_token_ids, min_ratio=0.0)
-            free_decode_pass = (
-                ratio_doubled >= FREE_DECODE_MIN_RATIO_DOUBLED
-                and (ratio_doubled - ratio_single) >= FREE_DECODE_MIN_MARGIN
-            )
-
-            cand = _repeat_window_candidate(
-                engine, word_indices, cues, log_probs, combined_token_ids, blank_id,
-                window_start, window_end, min_word_dur_frames,
-                phrase_token_ids=phrase_token_ids, doubled_ids=doubled_ids,
-            )
-            if cand is None:
-                continue
-
-            # Fix 2's acoustic-confidence gate -- see docstring. Reject this
-            # K unless BOTH copies clear the floor; either copy alone being
-            # a weak mechanical artifact is disqualifying.
-            window_log_probs_cpu = log_probs_cpu[window_start:window_end + 1]
-            avg1 = avg_logprob_along_path(
-                window_log_probs_cpu, cand["ext"], cand["path"],
-                cand["copy1_start_local"], cand["copy1_end_local"],
-            )
-            avg2 = avg_logprob_along_path(
-                window_log_probs_cpu, cand["ext"], cand["path"],
-                cand["copy2_start_local"], cand["copy2_end_local"],
-            )
-            bilateral = min(avg1, avg2)
-            if bilateral < confidence_floor:
-                continue
-
-            # Fix 4's gap-artifact secondary reject -- see docstring point 4.
-            gap_frames = cand["copy2_start_local"] - cand["copy1_end_local"]
-            margin_above_floor = bilateral - confidence_floor
-            if gap_frames <= GAP_ARTIFACT_MAX_FRAMES and margin_above_floor < GAP_ARTIFACT_MIN_MARGIN:
-                continue
-
-            if not free_decode_pass and (margin_above_floor < 0.3 or gap_frames <= GAP_ARTIFACT_MAX_FRAMES):
-                continue
-
-            # Tie-break rule (see docstring point 3): combine bilateral acoustic
-            # confidence with phrase length K (preferring complete phrase coverage
-            # over sub-phrases when both clear the acoustic confidence floor).
-            cand_score = bilateral + 0.25 * (K - 1)
-            if best is None or cand_score > best[2]:
-                best = (K, cand, cand_score, window_start)
-
-        if best is None:
-            continue
-
-        K, cand, _bilateral, window_start = best
-        word_indices = list(range(i - K + 1, i + 1))
-        accepted_fixes[i] = (word_indices, cand, window_start)
-        consumed.update(word_indices)
-
-    if not accepted_fixes:
-        return cues
-
+    
+    total_paths_len = _fast_ops.fast_detect_and_fix_repeats_engine(
+        num_cues,
+        cue_starts.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        cue_ends.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        cue_ayas.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        cue_suras.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        cue_is_ayah_final.ctypes.data_as(ctypes.POINTER(ctypes.c_int8)),
+        cue_token_offsets.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        cue_token_counts.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        combined_token_ids_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        len(combined_token_ids_arr),
+        log_probs_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        T, V,
+        full_greedy_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        blank_id,
+        confidence_floor,
+        FREE_DECODE_MIN_RATIO_DOUBLED,
+        FREE_DECODE_MIN_MARGIN,
+        GAP_ARTIFACT_MAX_FRAMES,
+        GAP_ARTIFACT_MIN_MARGIN,
+        int(min_word_dur_frames),
+        _max_rw,
+        margin,
+        median,
+        low_ratio,
+        high_ratio,
+        ayah_final_high_ratio_mult,
+        out_K.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        out_window_start.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        out_window_end.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        out_path_offsets.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        out_path_lengths.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        out_paths.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
+    )
+    
+    from ..trellis import frame_spans_from_path
+    from .spans import token_frame_spans
+    
     def _shift_token_spans(token_spans, offset):
         return [(s + offset, e + offset) for s, e in token_spans]
-
-    def _spliced_cue(orig, start_local, end_local, token_spans_local, window_start, cand, is_repeat):
-        # Confidence signals for a repeat-spliced word MUST be computed
-        # against `cand`'s own LOCAL doubled-reference re-alignment
-        # (window_log_probs/ext/path/margins), never the main pass's --
-        # this word's frames live in a different, locally re-derived
-        # trellis than the one the main-pass ext/path/margins describe, so
-        # reusing the main pass's arrays here would silently score the
-        # wrong symbols. Pre-computing these here (rather than leaving them
-        # for confidence.flag_low_confidence_words to fill in generically)
-        # is what lets that function treat "already has avg_logprob" as
-        # the signal to skip a cue -- see its docstring.
+        
+    def _spliced_cue(orig, start_local, end_local, token_spans_local, window_start, ext2, path2, is_repeat):
         return {
             **orig,
             "start_frame": start_local + window_start,
@@ -495,18 +358,62 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
             "is_repeat": is_repeat,
             "token_frame_spans": _shift_token_spans(token_spans_local, window_start),
             "avg_logprob": avg_logprob_along_path(
-                log_probs_cpu[window_start:window_start + len(cand["path"])], cand["ext"], cand["path"], start_local, end_local,
+                log_probs_np[window_start:window_start + len(path2)], ext2, path2, start_local, end_local
             ),
-            "min_decision_margin": per_word_min_margin(cand.get("margins"), start_local, end_local),
+            "min_decision_margin": per_word_min_margin(None, start_local, end_local),
         }
 
+    consumed = set()
+    accepted_fixes = {}
+    for i in range(num_cues):
+        K = out_K[i]
+        if K > 0:
+            window_start = out_window_start[i]
+            window_end = out_window_end[i]
+            offset = out_path_offsets[i]
+            length = out_path_lengths[i]
+            path2 = out_paths[offset:offset+length]
+            
+            word_indices = list(range(i - K + 1, i + 1))
+            phrase_token_ids, doubled_ids = build_phrase_ids(word_indices, cues, combined_token_ids)
+            
+            ext2 = np.empty(2 * len(doubled_ids) + 1, dtype=np.int32)
+            for s in range(len(doubled_ids)):
+                ext2[2*s] = blank_id
+                ext2[2*s+1] = doubled_ids[s]
+            ext2[-1] = blank_id
+            
+            first_seen, last_seen = frame_spans_from_path(path2, len(ext2))
+            
+            def positions_for(local_offset, count): return list(range(local_offset, local_offset + count))
+            
+            word_ntoks = [len(cues[j]["token_positions"]) for j in word_indices]
+            offsets_l = []
+            acc = 0
+            for nt in word_ntoks:
+                offsets_l.append(acc)
+                acc += nt
+            L_single = acc
+            
+            per_word_copy1 = {}
+            per_word_copy2 = {}
+            for m, j in enumerate(word_indices):
+                nt = word_ntoks[m]
+                s1_spans = token_frame_spans(positions_for(offsets_l[m], nt), first_seen, last_seen)
+                s2_spans = token_frame_spans(positions_for(L_single + offsets_l[m], nt), first_seen, last_seen)
+                per_word_copy1[j] = (s1_spans[1], s1_spans[2], s1_spans[0])
+                per_word_copy2[j] = (s2_spans[1], s2_spans[2], s2_spans[0])
+                
+            accepted_fixes[i] = (word_indices, per_word_copy1, per_word_copy2, window_start, ext2, path2)
+            consumed.update(word_indices)
+            
     fixed = [c for j, c in enumerate(cues) if j not in consumed]
-    for word_indices, cand, window_start in accepted_fixes.values():
+    for word_indices, per_word_copy1, per_word_copy2, window_start, ext2, path2 in accepted_fixes.values():
         for j in word_indices:
-            s1, e1, tok_spans1 = cand["per_word_copy1"][j]
-            s2, e2, tok_spans2 = cand["per_word_copy2"][j]
+            s1, e1, tok_spans1 = per_word_copy1[j]
+            s2, e2, tok_spans2 = per_word_copy2[j]
             orig = cues[j]
-            fixed.append(_spliced_cue(orig, s1, e1, tok_spans1, window_start, cand, is_repeat=False))
-            fixed.append(_spliced_cue(orig, s2, e2, tok_spans2, window_start, cand, is_repeat=True))
-
+            fixed.append(_spliced_cue(orig, s1, e1, tok_spans1, window_start, ext2, path2, is_repeat=False))
+            fixed.append(_spliced_cue(orig, s2, e2, tok_spans2, window_start, ext2, path2, is_repeat=True))
+            
     return fixed

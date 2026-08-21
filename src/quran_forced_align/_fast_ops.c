@@ -176,3 +176,223 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
     if (heap_bp) free(backptr);
     return 0;
 }
+
+
+// Fast repeat anomaly detection and phrase search engine
+// Returns the total number of paths generated (total length of out_paths).
+int fast_detect_and_fix_repeats_engine(
+    int num_cues,
+    const int32_t* cue_starts,
+    const int32_t* cue_ends,
+    const int32_t* cue_ayas,
+    const int32_t* cue_suras,
+    const int8_t* cue_is_ayah_final,
+    const int32_t* cue_token_offsets,
+    const int32_t* cue_token_counts,
+    const int32_t* combined_token_ids,
+    int combined_token_ids_len,
+    const float* log_probs, // T x V
+    int T,
+    int V,
+    const int32_t* full_greedy_ids, // T
+    int blank_id,
+    float confidence_floor,
+    float free_decode_min_ratio_doubled,
+    float free_decode_min_margin,
+    int gap_artifact_max_frames,
+    float gap_artifact_min_margin,
+    float min_word_dur_frames,
+    int max_repeat_window_words,
+    int margin_val,
+    double median_dur,
+    double low_ratio,
+    double high_ratio,
+    double ayah_final_high_ratio_mult,
+    // Outputs:
+    int32_t* out_K, // size num_cues, initialized to 0
+    int32_t* out_window_start, // size num_cues
+    int32_t* out_window_end, // size num_cues
+    int32_t* out_path_offsets, // size num_cues
+    int32_t* out_path_lengths, // size num_cues
+    int32_t* out_paths // large buffer (T*2)
+) {
+    int total_paths_len = 0;
+    int8_t* consumed = (int8_t*)calloc(num_cues, sizeof(int8_t));
+    
+    // buffers for max sequence lengths
+    int32_t* decoded_ids = (int32_t*)malloc(T * sizeof(int32_t));
+    int32_t* phrase_ids = (int32_t*)malloc(T * sizeof(int32_t));
+    int32_t* doubled_ids = (int32_t*)malloc(T * sizeof(int32_t));
+    int32_t* path2 = (int32_t*)malloc(T * sizeof(int32_t));
+    int32_t* ext2 = (int32_t*)malloc(T * sizeof(int32_t));
+    int32_t* first_seen = (int32_t*)malloc(T * sizeof(int32_t));
+    int32_t* last_seen = (int32_t*)malloc(T * sizeof(int32_t));
+    int32_t* best_path = (int32_t*)malloc(T * sizeof(int32_t));
+
+    for (int i = 0; i < num_cues; ++i) {
+        out_K[i] = 0;
+        
+        if (cue_token_counts[i] == 0) continue;
+        
+        double d = cue_ends[i] - cue_starts[i];
+        double high_cutoff = high_ratio * (cue_is_ayah_final[i] ? ayah_final_high_ratio_mult : 1.0);
+        int is_anom = (d < low_ratio * median_dur || d > high_cutoff * median_dur);
+        if (!is_anom) continue;
+
+        int words_left_in_aya = 1;
+        while (i - words_left_in_aya >= 0 && 
+               cue_ayas[i - words_left_in_aya] == cue_ayas[i] && 
+               cue_suras[i - words_left_in_aya] == cue_suras[i]) {
+            words_left_in_aya++;
+        }
+        int k_max = words_left_in_aya;
+        if (max_repeat_window_words > 0 && k_max > max_repeat_window_words) {
+            k_max = max_repeat_window_words;
+        }
+
+        int window_end = (i < num_cues - 1) ? (cue_starts[i + 1] - 1) : (T - 1);
+        if (window_end > T - 1) window_end = T - 1;
+        
+        int j0_widest = i - k_max + 1;
+        int window_start_widest = (j0_widest > 0) ? (cue_ends[j0_widest - 1] + 1) : (cue_starts[j0_widest] - margin_val);
+        if (window_start_widest < 0) window_start_widest = 0;
+        
+        if (window_end <= window_start_widest) continue;
+
+        int best_K = 0;
+        float best_score = -1e30f;
+        int best_window_start = 0;
+
+        for (int K = 1; K <= k_max; ++K) {
+            int j0 = i - K + 1;
+            if (j0 < 0) break;
+            int overlap = 0;
+            for (int j = j0; j < i; ++j) {
+                if (consumed[j]) { overlap = 1; break; }
+            }
+            if (overlap) break;
+
+            int window_start = (j0 > 0) ? (cue_ends[j0 - 1] + 1) : (cue_starts[j0] - margin_val);
+            if (window_start < 0) window_start = 0;
+            if (window_end <= window_start) continue;
+            
+            int L = 0;
+            for (int j = j0; j <= i; ++j) {
+                int offset = cue_token_offsets[j];
+                int count = cue_token_counts[j];
+                for (int c = 0; c < count; ++c) {
+                    phrase_ids[L++] = combined_token_ids[offset + c];
+                }
+            }
+            for (int c = 0; c < L; ++c) {
+                doubled_ids[c] = phrase_ids[c];
+                doubled_ids[L + c] = phrase_ids[c];
+            }
+            int L_doubled = 2 * L;
+
+            const int32_t* window_ids = full_greedy_ids + window_start;
+            int window_len = window_end - window_start + 1;
+            int decoded_len = fast_collapse_ctc_ids(window_ids, window_len, blank_id, decoded_ids);
+            
+            double ratio_doubled = fast_token_id_levenshtein_ratio(decoded_ids, decoded_len, doubled_ids, L_doubled, 0.0);
+            double ratio_single = fast_token_id_levenshtein_ratio(decoded_ids, decoded_len, phrase_ids, L, 0.0);
+            
+            int free_decode_pass = (ratio_doubled >= free_decode_min_ratio_doubled && 
+                                   (ratio_doubled - ratio_single) >= free_decode_min_margin);
+            
+            int align_res = fast_ctc_forced_align(log_probs + window_start * V, window_len, V, doubled_ids, L_doubled, blank_id, path2);
+            if (align_res != 0) continue;
+            
+            int num_states = 2 * L_doubled + 1;
+            for (int s = 0; s < num_states; ++s) {
+                first_seen[s] = -1;
+                last_seen[s] = -1;
+            }
+            for (int t = 0; t < window_len; ++t) {
+                int s = path2[t];
+                if (s >= 0 && s < num_states) {
+                    if (first_seen[s] == -1) first_seen[s] = t;
+                    last_seen[s] = t;
+                }
+            }
+            
+            int timing_failed = 0;
+            for (int s = 0; s < L; ++s) {
+                if (first_seen[2*s+1] < 0 || last_seen[2*s+1] < 0) { timing_failed = 1; break; }
+                if (first_seen[2*(L+s)+1] < 0 || last_seen[2*(L+s)+1] < 0) { timing_failed = 1; break; }
+            }
+            if (timing_failed) continue;
+            
+            int copy1_start_local = first_seen[1];
+            int copy1_end_local = last_seen[2 * L - 1];
+            int copy2_start_local = first_seen[2 * L + 1];
+            int copy2_end_local = last_seen[4 * L - 1];
+            
+            int timing_plausible = (copy2_start_local > copy1_end_local && 
+                                   (copy1_end_local - copy1_start_local) >= min_word_dur_frames &&
+                                   (copy2_end_local - copy2_start_local) >= min_word_dur_frames);
+            if (!timing_plausible) continue;
+            
+            for (int s = 0; s < L_doubled; ++s) {
+                ext2[2*s] = blank_id;
+                ext2[2*s+1] = doubled_ids[s];
+            }
+            ext2[2*L_doubled] = blank_id;
+            
+            double sum1 = 0, sum2 = 0;
+            for (int t = copy1_start_local; t <= copy1_end_local; ++t) {
+                sum1 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+            }
+            for (int t = copy2_start_local; t <= copy2_end_local; ++t) {
+                sum2 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+            }
+            float avg1 = (float)(sum1 / (copy1_end_local - copy1_start_local + 1));
+            float avg2 = (float)(sum2 / (copy2_end_local - copy2_start_local + 1));
+            float bilateral = avg1 < avg2 ? avg1 : avg2;
+            
+            if (bilateral < confidence_floor) continue;
+            
+            int gap_frames = copy2_start_local - copy1_end_local;
+            float margin_above_floor = bilateral - confidence_floor;
+            if (gap_frames <= gap_artifact_max_frames && margin_above_floor < gap_artifact_min_margin) continue;
+            
+            if (!free_decode_pass && (margin_above_floor < 0.3f || gap_frames <= gap_artifact_max_frames)) continue;
+            
+            float cand_score = bilateral + 0.25f * (K - 1);
+            if (cand_score > best_score) {
+                best_score = cand_score;
+                best_K = K;
+                best_window_start = window_start;
+                memcpy(best_path, path2, window_len * sizeof(int32_t));
+            }
+        }
+        
+        if (best_K > 0) {
+            out_K[i] = best_K;
+            out_window_start[i] = best_window_start;
+            out_window_end[i] = window_end;
+            out_path_offsets[i] = total_paths_len;
+            
+            int window_len = window_end - best_window_start + 1;
+            out_path_lengths[i] = window_len;
+            memcpy(out_paths + total_paths_len, best_path, window_len * sizeof(int32_t));
+            total_paths_len += window_len;
+            
+            for (int j = i - best_K + 1; j <= i; ++j) {
+                consumed[j] = 1;
+            }
+        }
+    }
+    
+    free(consumed);
+    free(decoded_ids);
+    free(phrase_ids);
+    free(doubled_ids);
+    free(path2);
+    free(ext2);
+    free(first_seen);
+    free(last_seen);
+    free(best_path);
+    
+    return total_paths_len;
+}
