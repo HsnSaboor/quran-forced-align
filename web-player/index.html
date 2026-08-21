@@ -104,7 +104,7 @@
     </header>
 
     <!-- Controls -->
-    <div class="flex flex-wrap items-center gap-3 mb-4">
+    <div class="flex flex-wrap items-center gap-3 mb-3">
       <label class="text-sm font-medium text-stone-600" for="surah-select">Surah</label>
       <select id="surah-select"
         class="bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
@@ -116,6 +116,21 @@
         class="bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
                focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500">
       </select>
+
+      <div class="h-6 w-px bg-stone-300 mx-1 hidden sm:block"></div>
+
+      <!-- Custom File Pickers -->
+      <label class="cursor-pointer inline-flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-700 px-3 py-2 rounded-lg text-sm transition-colors shadow-sm font-ui">
+        <svg class="w-4 h-4 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+        <span id="audio-file-label">Pick Audio File…</span>
+        <input id="custom-audio-input" type="file" accept="audio/*,.mp3,.wav,.opus,.m4a" class="hidden" />
+      </label>
+
+      <label class="cursor-pointer inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 px-3 py-2 rounded-lg text-sm transition-colors shadow-sm font-ui">
+        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <span id="json-file-label">Pick JSON / SRT…</span>
+        <input id="custom-json-input" type="file" accept=".json,.srt,text/plain" class="hidden" />
+      </label>
 
       <label class="ml-auto flex items-center gap-2 text-sm text-stone-600 select-none cursor-pointer">
         <input id="autoscroll-toggle" type="checkbox"
@@ -240,6 +255,7 @@
   // itself cares which container format the browser's <audio> element
   // ultimately decodes.
   const RECITERS = {
+    sudais: { label: 'Abdur-Rahman As-Sudais (Colab CUDA 222x)', ext: 'mp3' },
     alafasy: { label: 'Mishary Alafasy', ext: 'mp3' },
     basit: { label: 'Abdul Basit (murattal)', ext: 'mp3' },
     kaseb: { label: 'Ahmed Kaseb', ext: 'opus' },
@@ -256,6 +272,7 @@
   const SURAH_RECITERS = {
     2: ['kaseb', 'jabir', 'ayoub'],
     7: ['sinan'],
+    18: ['sudais'],
     35: ['alkasim'],
     66: ['alafasy', 'basit'],
     67: ['alafasy'],
@@ -270,6 +287,10 @@
   const els = {
     select: document.getElementById('surah-select'),
     reciterSelect: document.getElementById('reciter-select'),
+    customAudioInput: document.getElementById('custom-audio-input'),
+    customJsonInput: document.getElementById('custom-json-input'),
+    audioFileLabel: document.getElementById('audio-file-label'),
+    jsonFileLabel: document.getElementById('json-file-label'),
     audio: document.getElementById('audio'),
     text: document.getElementById('quran-text'),
     status: document.getElementById('status'),
@@ -299,35 +320,84 @@
   /** @type {{word:string,start:number,end:number,sura:number,aya:number,is_repeat:boolean}[]} */
   let words = [];
 
-  // The visible Quran text renders exactly ONE <span> per real word
-  // position -- never duplicated for a detected repeat's second occurrence
-  // (a hifz-practice repeat is the reciter saying the SAME word again, not
-  // a second word in the text). `wordEls[d]` is that word's single DOM
-  // node; `cueToDisplayIdx[i]` maps EVERY cue in `words` (including
-  // is_repeat=true ones) to the display index `d` of the text span it
-  // should highlight -- so when playback reaches a repeat's second
-  // occurrence, the SAME on-screen word lights up again (the highlight
-  // "moves back" to it), instead of a phantom duplicate word appearing.
-  // Both arrays are (re)built together in renderText().
   let wordEls = [];
   let cueToDisplayIdx = [];
   let currentIdx = -1;   // display index (into wordEls) currently highlighted, or -1
-
-  /** @type {{word:string,aya:number}[]} one entry per unique on-screen word
-   * position, built by buildDisplayMapping -- the text-rendering pass
-   * (renderText) iterates THIS array, not `words`, so a repeat's second
-   * occurrence never produces a second span. */
   let displayWords = [];
-
-  /** @type {{firstStart:number,firstEnd:number,secondStart:number,secondEnd:number}[]}
-   * One entry per detected repeat SITE (a contiguous run of is_repeat=true
-   * word-cues counts as one site, not one per word -- see groupRepeatSites).
-   * Sorted ascending by firstStart (both by construction: `words` itself is
-   * sorted, and sites are discovered in a single forward pass over it). */
   let repeatSites = [];
   let totalDuration = 0; // audio.duration, cached on loadedmetadata (0 until then)
 
   function pad3(n) { return String(n).padStart(3, '0'); }
+
+  function normalizeWordRecords(rawList) {
+    return rawList.map((r, i) => {
+      const start = Number(r.start_time_sec ?? r.start_sec ?? r.start ?? 0);
+      const end = Number(r.end_time_sec ?? r.end_sec ?? r.end ?? (start + 0.5));
+      const word = String(r.word ?? r.text ?? '').trim();
+      const aya = Number(r.aya ?? r.ayah ?? 1);
+      const sura = Number(r.sura ?? r.surah ?? 1);
+      const is_repeat = Boolean(r.is_repeat ?? false);
+      return { word, start, end, aya, sura, is_repeat };
+    }).filter(r => r.word.length > 0);
+  }
+
+  function parseSrtText(srtContent) {
+    const blocks = srtContent.trim().split(/\n\s*\n/);
+    const parsed = [];
+    for (const b of blocks) {
+      const lines = b.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) continue;
+      // Time line is index 1 (or 0 if index number missing)
+      const timeLine = lines.find(l => l.includes('-->'));
+      if (!timeLine) continue;
+      const textLines = lines.slice(lines.indexOf(timeLine) + 1).join(' ');
+      const match = timeLine.match(/(\d+):(\d+):(\d+)[,\.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,\.](\d+)/);
+      if (!match) continue;
+      const s = Number(match[1])*3600 + Number(match[2])*60 + Number(match[3]) + Number(match[4])/1000;
+      const e = Number(match[5])*3600 + Number(match[6])*60 + Number(match[7]) + Number(match[8])/1000;
+      parsed.push({ word: textLines, start_time_sec: s, end_time_sec: e, is_repeat: false });
+    }
+    return normalizeWordRecords(parsed);
+  }
+
+  function applyAlignmentRecords(rawRecords, sourceLabel) {
+    words = normalizeWordRecords(rawRecords);
+    repeatSites = groupRepeatSites(words);
+    ({ displayWords, cueToDisplayIdx } = buildDisplayMapping(words));
+    currentIdx = -1;
+    renderText();
+    renderTimeline();
+    updateRepeatButtons();
+    els.status.textContent = `${words.length} words loaded, ${repeatSites.length} repeat site(s) — [${sourceLabel}]`;
+  }
+
+  function loadCustomAudioFile(file) {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    els.audio.src = url;
+    els.audio.load();
+    els.audioFileLabel.textContent = file.name.length > 20 ? file.name.slice(0, 18) + '…' : file.name;
+    els.status.textContent = `Loaded audio: ${file.name}`;
+  }
+
+  async function loadCustomAlignmentFile(file) {
+    if (!file) return;
+    els.status.textContent = `Reading ${file.name}…`;
+    const text = await file.text();
+    els.jsonFileLabel.textContent = file.name.length > 20 ? file.name.slice(0, 18) + '…' : file.name;
+    try {
+      if (file.name.endsWith('.json') || text.trim().startsWith('[') || text.trim().startsWith('{')) {
+        const json = JSON.parse(text);
+        const list = Array.isArray(json) ? json : (json.records || json.cues || [json]);
+        applyAlignmentRecords(list, file.name);
+      } else {
+        const list = parseSrtText(text);
+        applyAlignmentRecords(list, file.name);
+      }
+    } catch (err) {
+      els.status.textContent = `Failed to parse ${file.name}: ${err.message}`;
+    }
+  }
 
   function populateSurahSelect() {
     for (const s of SURAHS) {
@@ -774,11 +844,29 @@
   els.select.addEventListener('change', () => loadSurah(Number(els.select.value)));
   els.reciterSelect.addEventListener('change', () =>
     loadSurahAndReciter(Number(els.select.value), els.reciterSelect.value));
+  
+  els.customAudioInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) loadCustomAudioFile(e.target.files[0]);
+  });
+  els.customJsonInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) loadCustomAlignmentFile(e.target.files[0]);
+  });
+
+  // Drag and Drop anywhere on the page
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (!e.dataTransfer || !e.dataTransfer.files) return;
+    for (const f of e.dataTransfer.files) {
+      if (f.type.startsWith('audio/') || /\.(mp3|wav|opus|m4a|ogg)$/i.test(f.name)) {
+        loadCustomAudioFile(f);
+      } else if (/\.(json|srt)$/i.test(f.name)) {
+        loadCustomAlignmentFile(f);
+      }
+    }
+  });
+
   els.audio.addEventListener('timeupdate', () => { onTimeUpdate(); updateTimelinePlayhead(); });
-  // Fires on EVERY currentTime assignment (word click, timeline click,
-  // native scrubber drag, AND jumpToRepeat's own seek) -- the single
-  // choke point needed to invalidate currentRepeatSiteIdx on anything
-  // that isn't jumpToRepeat itself, see that flag's own comment.
   els.audio.addEventListener('seeking', resetRepeatTrackingOnManualSeek);
   els.audio.addEventListener('loadedmetadata', () => {
     totalDuration = els.audio.duration || 0;
