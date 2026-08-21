@@ -255,6 +255,8 @@
   // itself cares which container format the browser's <audio> element
   // ultimately decodes.
   const RECITERS = {
+    downloads: { label: 'Downloads 002.json (Reference ASR)', ext: 'opus' },
+    colab_aligned: { label: 'Colab CUDA GPU Aligned (Surah 2)', ext: 'opus' },
     sudais: { label: 'Abdur-Rahman As-Sudais (Colab CUDA 222x)', ext: 'mp3' },
     alafasy: { label: 'Mishary Alafasy', ext: 'mp3' },
     basit: { label: 'Abdul Basit (murattal)', ext: 'mp3' },
@@ -270,7 +272,7 @@
   // browsers can't do) so a missing file fails loudly via the fetch()
   // below instead of silently omitting an option.
   const SURAH_RECITERS = {
-    2: ['kaseb', 'jabir', 'ayoub'],
+    2: ['downloads', 'colab_aligned', 'kaseb', 'jabir', 'ayoub'],
     7: ['sinan'],
     18: ['sudais'],
     35: ['alkasim'],
