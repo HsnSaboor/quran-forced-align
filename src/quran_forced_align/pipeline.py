@@ -140,7 +140,7 @@ from .constants import (
     SAMPLE_RATE,
 )
 from .engines import get_engine
-from .features import compute_fbank_features
+from .features import compute_fbank_features, compute_fbank_features_gpu
 from .reference import build_combined_reference
 from .repeats import detect_and_fix_repeats, extract_word_frame_spans
 from .silence import find_silence_midpoints
@@ -149,7 +149,7 @@ from .tokenizer import load_tokens
 from .trellis import frame_spans_from_path
 
 
-def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log):
+def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, device="cpu"):
     """Steps [1/6]-[2/6] of `align_surah`: build the word<->phoneme
     reference and extract fbank features for one surah -- factored out so
     `align_surahs_batched` can run this same per-surah preparation for
@@ -175,7 +175,13 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log):
     log(f"[2/6] Loading + extracting deterministic fbank features: {audio_path}")
     samples = load_audio_as_wav16k(audio_path)
     log(f"      {len(samples) / SAMPLE_RATE:.1f}s of audio")
-    feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
+    if device == "cuda":
+        try:
+            feats = compute_fbank_features_gpu(samples, tail_silence_sec=tail_silence_sec, device="cuda")
+        except Exception:
+            feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
+    else:
+        feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
     return tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples
 
 
@@ -269,7 +275,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
             print(msg)
 
     tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = _build_surah_inputs(
-        surah, audio_path, tokens_path, tail_silence_sec, log
+        surah, audio_path, tokens_path, tail_silence_sec, log, device=device
     )
 
     log(f"[3/6] Running streaming Zipformer2-CTC on the {device!r} engine (cache-threaded chunks)...")

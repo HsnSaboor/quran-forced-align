@@ -9,10 +9,10 @@ import urllib.request
 from pathlib import Path
 from typing import Optional, Tuple
 
-HF_REPO = "Quran-Lab/zipformer_p-arabic-v3"
-DEFAULT_INT8_MODEL = "zipformer_p_arabic_v3.int8.onnx"
-DEFAULT_FP32_MODEL = "zipformer_p_arabic_v3.1.onnx"
+HF_REPO = "Saboorhsn/quran-stt-onnx"
 DEFAULT_FP16_MODEL = "zipformer_p_arabic_v3.1.fp16.onnx"
+DEFAULT_FP32_MODEL = "zipformer_p_arabic_v3.1.onnx"
+DEFAULT_INT8_MODEL = "zipformer_p_arabic_v3.1.int8.onnx"
 DEFAULT_TOKENS = "tokens.txt"
 
 CACHE_DIR = Path(os.environ.get("QURAN_FORCED_ALIGN_CACHE_DIR", Path.home() / ".cache" / "quran-forced-align"))
@@ -125,7 +125,12 @@ def resolve_model(
                 return str(p)
 
     # Auto-download best candidate to cache
-    chosen = candidate_filenames[0]
+    downloadable_candidates = (
+        [DEFAULT_FP16_MODEL, DEFAULT_FP32_MODEL, DEFAULT_INT8_MODEL]
+        if (resolved_device == "cuda" and prefer_fp16)
+        else [DEFAULT_INT8_MODEL, DEFAULT_FP32_MODEL]
+    )
+    chosen = downloadable_candidates[0]
     target = CACHE_DIR / chosen
     _download_file(get_hf_url(chosen), target, desc=f"Zipformer model ({chosen})")
     return str(target)

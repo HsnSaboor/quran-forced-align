@@ -75,9 +75,11 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    background-color: rgb(217 119 6 / 0.30); /* amber-600 @ 30% */
-    border-left: 1px solid rgb(217 119 6 / 0.6);
-    border-right: 1px solid rgb(217 119 6 / 0.6);
+    background-color: rgb(245 158 11 / 0.95); /* amber-500 @ 95% */
+    border: 1px solid rgb(180 83 9); /* amber-700 */
+    border-radius: 2px;
+    z-index: 5;
+    box-shadow: 0 0 5px rgb(245 158 11 / 0.9);
   }
   /* Tick mark at each repeat site's first-occurrence start -- a thin
      brighter sliver on top of the range fill so the exact anchor point
@@ -87,8 +89,10 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 2px;
-    background-color: rgb(180 83 9); /* amber-700 */
+    width: 3px;
+    background-color: rgb(217 119 6);
+    z-index: 6;
+    pointer-events: none;
   }
 </style>
 </head>
@@ -230,7 +234,7 @@
            flagged second occurrence) plus a tick at each site's
            first-occurrence start -- information the native <audio>
            scrubber has no way to display. -->
-      <div id="timeline" class="relative flex-1 h-2.5 rounded-full bg-stone-200 cursor-pointer select-none overflow-hidden">
+      <div id="timeline" class="relative flex-1 h-3.5 rounded-full bg-stone-200 cursor-pointer select-none overflow-hidden shadow-inner">
         <div id="timeline-repeats" class="absolute inset-y-0 left-0 w-full"></div>
         <div id="timeline-playhead"
              class="absolute inset-y-0 w-1 rounded-full bg-stone-700 pointer-events-none"
@@ -617,7 +621,8 @@
       const range = document.createElement('div');
       range.className = 'timeline-repeat-range';
       range.style.left = `${startPct}%`;
-      range.style.width = `${Math.max(endPct - startPct, 0.3)}%`;
+      range.style.width = `${Math.max(endPct - startPct, 0.8)}%`;
+      range.style.minWidth = '5px';
       range.title = `repeat: ${site.firstStart.toFixed(1)}s – ${site.secondEnd.toFixed(1)}s`;
       els.timelineRepeats.appendChild(range);
 

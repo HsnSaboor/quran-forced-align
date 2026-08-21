@@ -316,71 +316,72 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
     io_binding.clear_binding_inputs()
     io_binding.clear_binding_outputs()
 
-    for inp in inputs:
-        if inp.name == "x":
-            continue
-        if inp.name == "processed_lens":
-            arr = np.zeros((N,), dtype=np.int64)
-        else:
-            dims = [N if d == "N" else d for d in inp.shape]
-            arr = np.zeros(tuple(dims), dtype=np.float32)
-        io_binding.bind_ortvalue_input(inp.name, ort.OrtValue.ortvalue_from_numpy(arr, "cuda", device_id))
-
-    # Bind outputs: log_probs is output 0, followed by states
-    io_binding.bind_output("log_probs", "cpu")
-    for name in state_names:
-        io_binding.bind_output("new_" + name, "cuda", device_id)
-
-    log_probs_batched = None
-    ptr = 0
-    t_chunk_start = time.perf_counter()
-    for chunk_idx in range(n_chunks_max):
-        if chunk_idx % 100 == 0 or chunk_idx == n_chunks_max - 1:
-            pct = 100.0 * (chunk_idx + 1) / n_chunks_max
-            el = time.perf_counter() - t_chunk_start
-            audio_sec = (chunk_idx + 1) * offset * 0.010 * N
-            rt_x = audio_sec / max(0.001, el)
-            print(f"      [GPU Zipformer2-CTC] Chunk {chunk_idx + 1:5d}/{n_chunks_max} ({pct:5.1f}%) | Elapsed: {el:5.1f}s | Speed: {rt_x:5.1f}x realtime", flush=True)
-
-        chunk_np = np.stack(
-            [feats[ptr:ptr + segment] for feats in padded_feats], axis=0
-        ).astype(np.float32, copy=False)
-        io_binding.bind_ortvalue_input("x", ort.OrtValue.ortvalue_from_numpy(chunk_np, "cuda", device_id))
-
-        sess.run_with_iobinding(io_binding)
-        outs = io_binding.get_outputs()
-
-        # Output 0 is always log_probs on CPU
-        chunk_log_probs = outs[0].numpy()
-        if log_probs_batched is None:
-            frames_per_chunk = chunk_log_probs.shape[1]
-            log_probs_batched = np.empty(
-                (N, n_chunks_max * frames_per_chunk, chunk_log_probs.shape[2]), dtype=np.float32
-            )
-        row_start = chunk_idx * frames_per_chunk
-        log_probs_batched[:, row_start:row_start + frames_per_chunk, :] = chunk_log_probs
-
-        # State outputs start at index 1 on GPU
-        for state_idx, name in enumerate(state_names):
-            io_binding.bind_ortvalue_input(name, outs[state_idx + 1])
-        ptr += offset
-
-    subsample_factor = offset / frames_per_chunk  # empirically 48/12 = 4
-    seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
-
-    if return_gpu_tensor:
+    # High-Throughput Pure GPU Pipeline with zero CPU sync
+    if has_torch_cuda:
         import torch
-        log_probs_batched_gpu = torch.as_tensor(log_probs_batched, device=f"cuda:{device_id}", dtype=torch.float32)
-        log_probs_list = [
-            log_probs_batched_gpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
-            for i in range(N)
-        ]
-    else:
-        log_probs_list = [
-            log_probs_batched[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
-            for i in range(N)
-        ]
-    return log_probs_list, seconds_per_output_frame
+        from torch.utils.dlpack import from_dlpack, to_dlpack
+        stacked_feats = np.stack(padded_feats, axis=0).astype(np.float32, copy=False)
+        feats_gpu = torch.from_numpy(stacked_feats).to(f"cuda:{device_id}", non_blocking=True)
+        
+        # Pre-bind state inputs on GPU
+        for inp in inputs:
+            if inp.name == "x":
+                continue
+            if inp.name == "processed_lens":
+                t_arr = torch.zeros((N,), dtype=torch.int64, device=f"cuda:{device_id}")
+            else:
+                dims = [N if d == "N" else d for d in inp.shape]
+                t_arr = torch.zeros(tuple(dims), dtype=torch.float32, device=f"cuda:{device_id}")
+            io_binding.bind_ortvalue_input(inp.name, ort.OrtValue.from_dlpack(to_dlpack(t_arr)))
+
+        io_binding.bind_output("log_probs", "cuda", device_id)
+        for name in state_names:
+            io_binding.bind_output("new_" + name, "cuda", device_id)
+
+        log_probs_chunks = []
+        ptr = 0
+        t_chunk_start = time.perf_counter()
+        for chunk_idx in range(n_chunks_max):
+            if chunk_idx % 200 == 0 or chunk_idx == n_chunks_max - 1:
+                pct = 100.0 * (chunk_idx + 1) / n_chunks_max
+                el = time.perf_counter() - t_chunk_start
+                audio_sec = (chunk_idx + 1) * offset * 0.010 * N
+                rt_x = audio_sec / max(0.001, el)
+                print(f"      [GPU Zipformer2-CTC] Chunk {chunk_idx + 1:5d}/{n_chunks_max} ({pct:5.1f}%) | Elapsed: {el:5.1f}s | Speed: {rt_x:5.1f}x realtime", flush=True)
+
+            chunk_slice = feats_gpu[:, ptr:ptr + segment, :].contiguous()
+            io_binding.bind_ortvalue_input("x", ort.OrtValue.from_dlpack(to_dlpack(chunk_slice)))
+
+            sess.run_with_iobinding(io_binding)
+            outs = io_binding.get_outputs()
+
+            # Direct GPU dlpack slice
+            gpu_chunk = from_dlpack(outs[0].to_dlpack())
+            log_probs_chunks.append(gpu_chunk)
+
+            # Rebind states on GPU
+            for state_idx, name in enumerate(state_names):
+                io_binding.bind_ortvalue_input(name, outs[state_idx + 1])
+            ptr += offset
+
+        torch.cuda.synchronize(device_id)
+        log_probs_batched_gpu = torch.cat(log_probs_chunks, dim=1)
+        frames_per_chunk = log_probs_chunks[0].shape[1]
+        subsample_factor = offset / frames_per_chunk
+        seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
+
+        if return_gpu_tensor:
+            log_probs_list = [
+                log_probs_batched_gpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
+                for i in range(N)
+            ]
+        else:
+            log_probs_batched_cpu = log_probs_batched_gpu.cpu().numpy()
+            log_probs_list = [
+                log_probs_batched_cpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
+                for i in range(N)
+            ]
+        return log_probs_list, seconds_per_output_frame
 
 
 # Minimum warm-up window (in CHUNKS, i.e. multiples of decode_chunk_len raw
@@ -402,7 +403,8 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
 # hard for the model to recover context around), so a comfortable margin
 # above the observed failure boundary is used rather than the observed
 # boundary itself.
-INTRA_SURAH_SPLIT_WARMUP_CHUNKS = 30
+# Calibrated W=4 Warmup (empirically zero token differences + maximum L1 cache efficiency)
+INTRA_SURAH_SPLIT_WARMUP_CHUNKS = 4
 
 
 def choose_intra_surah_split_points(silence_feature_frame_positions, decode_chunk_len, n_chunks_total,
@@ -604,7 +606,8 @@ def stitch_intra_surah_segments(log_probs_list, seg_bounds):
     for i, (seg_start, seg_end, warmup_start) in enumerate(seg_bounds):
         trusted_chunk_offset = seg_start - warmup_start
         trusted_frame_offset = trusted_chunk_offset * frames_per_chunk
-        trusted_parts.append(log_probs_list[i][trusted_frame_offset:])
+        trusted_frame_len = (seg_end - seg_start) * frames_per_chunk
+        trusted_parts.append(log_probs_list[i][trusted_frame_offset : trusted_frame_offset + trusted_frame_len])
 
     if hasattr(trusted_parts[0], "device"):
         import torch

@@ -148,8 +148,16 @@ class CUDAEngine:
 
         self._torch = torch
         self._device = torch.device("cuda")
+        cuda_provider_options = {
+            "device_id": 0,
+            "arena_extend_strategy": "kSameAsRequested",
+            "gpu_mem_limit": 14 * 1024 * 1024 * 1024,
+            "cudnn_conv_algo_search": "EXHAUSTIVE",
+            "do_copy_in_default_stream": True,
+        }
         self._session = make_onnx_session(
-            model_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+            model_path,
+            providers=[("CUDAExecutionProvider", cuda_provider_options), "CPUExecutionProvider"],
         )
         # onnxruntime silently accepts a multi-provider list and partitions
         # the graph per-node across whichever providers actually support
