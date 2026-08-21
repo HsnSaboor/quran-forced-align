@@ -1,9 +1,14 @@
 import copy
+import gzip
+import os
+import pickle
 from functools import lru_cache
 
 from ..tokenizer import tokenize_with_char_starts
 from .boundary import _boundary_bridge_rules
 from .surah import build_surah_reference
+
+_REFS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "references")
 
 
 # Cache the expensive quran_phonetizer calls — Quran text is 100% static and
@@ -33,6 +38,14 @@ def build_combined_reference(sura_idx, tok2id, max_token_len, include_boundary_t
     doesn't need to know about ayah boundaries at all -- they fall out
     naturally from which word slot each token belongs to.
     """
+    s_file = os.path.join(_REFS_DIR, f"{sura_idx}.pkl")
+    if os.path.isfile(s_file):
+        try:
+            with open(s_file, "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            pass
+
     refs = _cached_surah_reference(sura_idx)
     # Deep-copy only the mutable fields (char_info dicts get boundary_tajweed_rules
     # mutated below). The phonemes/word_spans/phoneme_to_word/phoneme_to_char are
