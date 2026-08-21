@@ -127,3 +127,7 @@ GAP_ARTIFACT_MIN_MARGIN = 0.5  # nats above confidence_floor. Must be > the 0.03
 FREE_DECODE_MIN_RATIO_DOUBLED = 0.50  # sits below genuine case ratios (including no-pause repeats >=0.50)
 # and above the confirmed false positive's ratio_doubled (0.4444).
 FREE_DECODE_MIN_MARGIN = -0.25  # (ratio_doubled - ratio_single) must clear this; confirmed false positive is -0.4444.
+
+DEFAULT_INTRA_SURAH_MAX_SPLITS = 8  # Top longest silence split points to create optimal N<=9 batching
+DEFAULT_INTRA_SURAH_MIN_GAP_FRAMES = 100
+DEFAULT_INTRA_SURAH_MIN_SEG_FRAMES = 500

@@ -30,27 +30,17 @@ _MIN_SILENCE_RUN_SEC = 0.3  # shortest contiguous silence run treated as a real 
 # threshold this low still requires a real, sustained quiet stretch, not a single frame)
 
 
-def find_silence_midpoints(samples, sample_rate):
+def find_silence_midpoints(samples, sample_rate=16000, max_splits=8, min_gap_sec=60.0):
     """Return a sorted list of sample-index positions, each the MIDPOINT of
     a contiguous stretch of `samples` (16kHz mono float32, as returned by
     `audio.load_audio_as_wav16k`) whose RMS energy sits in the bottom
     `_SILENCE_PERCENTILE` of the whole recording's frame-energy
     distribution for at least `_MIN_SILENCE_RUN_SEC` seconds.
 
-    These are genuine, sustained low-energy stretches (natural recitation
-    pauses -- verified empirically to correspond to real ayah/phrase
-    boundaries in a real Quran recitation, not sustained-vowel elongations,
-    which stay near the recording's median energy, not its bottom 5th
-    percentile) -- safe candidate points to reset the streaming acoustic
-    model's cache at (see `onnx_model.py`'s intra-surah splitting), since a
-    cache reset mid-WORD (e.g. mid-madd-elongation) is exactly the failure
-    mode this detector exists to avoid triggering.
-
-    Returns an empty list if the recording has no silence run long enough
-    (e.g. a short clip, or an ayah recited with no internal pause at all --
-    Ayat al-Kursi is a known real-world example) -- callers must handle
-    zero candidate split points as "don't split this recording," not as an
-    error.
+    If `max_splits` is specified and more candidate silence runs exist,
+    this selects the top `max_splits` longest/deepest pauses separated by at
+    least `min_gap_sec` seconds to create evenly balanced, optimal intra-surah
+    batch segments (preventing excessive batch dimension overhead).
     """
     if sample_rate != 16000:
         raise ValueError(
@@ -73,7 +63,7 @@ def find_silence_midpoints(samples, sample_rate):
     is_silence = energies <= threshold
 
     min_run_frames = int(round(_MIN_SILENCE_RUN_SEC * 16000 / _HOP_SAMPLES))
-    midpoints = []
+    runs = []  # list of (midpoint_sample, run_length_frames)
     i = 0
     while i < n_frames:
         if is_silence[i]:
@@ -82,8 +72,32 @@ def find_silence_midpoints(samples, sample_rate):
                 j += 1
             if j - i >= min_run_frames:
                 mid_frame = (i + j) // 2
-                midpoints.append(mid_frame * _HOP_SAMPLES + _FRAME_LEN_SAMPLES // 2)
+                midpoint_sample = mid_frame * _HOP_SAMPLES + _FRAME_LEN_SAMPLES // 2
+                runs.append((midpoint_sample, j - i))
             i = j
         else:
             i += 1
-    return midpoints
+
+    if not runs:
+        return []
+
+    if max_splits is not None and len(runs) > max_splits:
+        # Sort runs by length descending (longest pauses first)
+        runs_by_len = sorted(runs, key=lambda r: r[1], reverse=True)
+        min_gap_samples = int(min_gap_sec * 16000)
+        selected = []
+        for pos, run_len in runs_by_len:
+            if all(abs(pos - chosen) >= min_gap_samples for chosen in selected):
+                selected.append(pos)
+                if len(selected) >= max_splits:
+                    break
+        # Fallback if strict spacing gave fewer than desired splits
+        if len(selected) < min(max_splits, len(runs)):
+            for pos, run_len in runs_by_len:
+                if pos not in selected:
+                    selected.append(pos)
+                    if len(selected) >= max_splits:
+                        break
+        return sorted(selected)
+
+    return sorted(r[0] for r in runs)

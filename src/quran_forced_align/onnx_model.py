@@ -6,6 +6,7 @@ log-probability matrix this pipeline needs is not obtainable via
 sherpa_onnx's Python API at all).
 """
 import math
+import time
 
 import numpy as np
 import onnxruntime as ort
@@ -314,95 +315,15 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         torch = None
         has_torch_cuda = False
 
+    padded_feats = []
+    for feats, n_chunks in zip(feats_list, n_chunks_per_stream):
+        total_len_needed = segment + (n_chunks_max - 1) * offset
+        pad_needed = max(0, total_len_needed - feats.shape[0])
+        if pad_needed > 0:
+            feats = np.concatenate([feats, np.zeros((pad_needed, feat_dim), dtype=np.float32)], axis=0)
+        padded_feats.append(feats)
+
     io_binding = sess.io_binding()
-
-    if has_torch_cuda:
-        # Single Host-to-Device transfer of all chunks
-        all_chunks_gpu = torch.as_tensor(all_chunks_host, device=f"cuda:{device_id}", dtype=torch.float32)
-        # Pre-allocate output buffer on GPU ONCE
-        log_probs_chunks_gpu = torch.empty(
-            (n_chunks_max, N, frames_per_chunk, 251), dtype=torch.float32, device=f"cuda:{device_id}"
-        )
-
-        for inp in inputs:
-            if inp.name == "x":
-                continue
-            if inp.name == "processed_lens":
-                t = torch.zeros((N,), dtype=torch.int64, device=f"cuda:{device_id}")
-                io_binding.bind_input(
-                    name=inp.name,
-                    device_type="cuda",
-                    device_id=device_id,
-                    element_type=np.int64,
-                    shape=t.shape,
-                    buffer_ptr=t.data_ptr(),
-                )
-            else:
-                dims = [N if d == "N" else d for d in inp.shape]
-                t = torch.zeros(tuple(dims), dtype=torch.float32, device=f"cuda:{device_id}")
-                io_binding.bind_input(
-                    name=inp.name,
-                    device_type="cuda",
-                    device_id=device_id,
-                    element_type=np.float32,
-                    shape=t.shape,
-                    buffer_ptr=t.data_ptr(),
-                )
-
-        for name in state_names:
-            io_binding.bind_output("new_" + name, "cuda", device_id)
-
-        chunk_bytes = N * segment * feat_dim * 4
-        out_chunk_bytes = N * frames_per_chunk * 251 * 4
-        x_shape = (N, segment, feat_dim)
-        lp_shape = (N, frames_per_chunk, 251)
-
-        for chunk_idx in range(n_chunks_max):
-            chunk_ptr = all_chunks_gpu.data_ptr() + chunk_idx * chunk_bytes
-            out_ptr = log_probs_chunks_gpu.data_ptr() + chunk_idx * out_chunk_bytes
-
-            io_binding.bind_input(
-                name="x",
-                device_type="cuda",
-                device_id=device_id,
-                element_type=np.float32,
-                shape=x_shape,
-                buffer_ptr=chunk_ptr,
-            )
-            io_binding.bind_output(
-                name="log_probs",
-                device_type="cuda",
-                device_id=device_id,
-                element_type=np.float32,
-                shape=lp_shape,
-                buffer_ptr=out_ptr,
-            )
-
-            sess.run_with_iobinding(io_binding)
-            outs = io_binding.get_outputs()
-
-            for name, out_idx in zip(state_names, state_out_idx):
-                io_binding.bind_ortvalue_input(name, outs[out_idx])
-                io_binding.bind_output("new_" + name, "cuda", device_id)
-
-        # [n_chunks_max, N, frames_per_chunk, 251] -> [N, total_out_frames, 251]
-        log_probs_batched_gpu = log_probs_chunks_gpu.permute(1, 0, 2, 3).reshape(
-            N, n_chunks_max * frames_per_chunk, 251
-        )
-        if return_gpu_tensor:
-            log_probs_list = [
-                log_probs_batched_gpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
-                for i in range(N)
-            ]
-        else:
-            log_probs_batched_cpu = log_probs_batched_gpu.cpu().numpy()
-            log_probs_list = [
-                log_probs_batched_cpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
-                for i in range(N)
-            ]
-        return log_probs_list, seconds_per_output_frame
-
-    # Fallback path if torch CUDA is not active
     for inp in inputs:
         if inp.name == "x":
             continue
@@ -416,15 +337,35 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
     for name in state_names:
         io_binding.bind_output("new_" + name, "cuda", device_id)
 
-    log_probs_batched = np.empty((N, n_chunks_max * frames_per_chunk, 251), dtype=np.float32)
+    log_probs_batched = None
+    ptr = 0
+    t_chunk_start = time.perf_counter()
     for chunk_idx in range(n_chunks_max):
-        chunk_np = all_chunks_host[chunk_idx]
+        if chunk_idx % 100 == 0 or chunk_idx == n_chunks_max - 1:
+            pct = 100.0 * (chunk_idx + 1) / n_chunks_max
+            el = time.perf_counter() - t_chunk_start
+            audio_sec = (chunk_idx + 1) * offset * 0.010 * N
+            rt_x = audio_sec / max(0.001, el)
+            print(f"      [GPU Zipformer2-CTC] Chunk {chunk_idx + 1:5d}/{n_chunks_max} ({pct:5.1f}%) | Elapsed: {el:5.1f}s | Speed: {rt_x:5.1f}x realtime", flush=True)
+
+        chunk_np = np.stack(
+            [feats[ptr:ptr + segment] for feats in padded_feats], axis=0
+        ).astype(np.float32, copy=False)
         io_binding.bind_ortvalue_input("x", ort.OrtValue.ortvalue_from_numpy(chunk_np, "cuda", device_id))
 
         sess.run_with_iobinding(io_binding)
         outs = io_binding.get_outputs()
 
-        chunk_log_probs = outs[log_probs_out_idx].numpy()
+        chunk_log_probs = outs[log_probs_out_idx].numpy()  # [N, frames_per_chunk, 251]
+        if log_probs_batched is None:
+            frames_per_chunk = chunk_log_probs.shape[1]
+            log_probs_batched = np.empty(
+                (N, n_chunks_max * frames_per_chunk, chunk_log_probs.shape[2]), dtype=np.float32
+            )
+        assert chunk_log_probs.shape[1] == frames_per_chunk, (
+            f"chunk {chunk_idx} emitted {chunk_log_probs.shape[1]} frames per stream, "
+            f"expected fixed frames_per_chunk={frames_per_chunk} (from chunk 0)"
+        )
         row_start = chunk_idx * frames_per_chunk
         log_probs_batched[:, row_start:row_start + frames_per_chunk, :] = chunk_log_probs
 
@@ -433,11 +374,23 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         io_binding.bind_output("log_probs", "cuda", device_id)
         for name in state_names:
             io_binding.bind_output("new_" + name, "cuda", device_id)
+        ptr += offset
 
-    log_probs_list = [
-        log_probs_batched[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
-        for i in range(N)
-    ]
+    subsample_factor = offset / frames_per_chunk  # empirically 48/12 = 4
+    seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
+
+    if return_gpu_tensor:
+        import torch
+        log_probs_batched_gpu = torch.as_tensor(log_probs_batched, device=f"cuda:{device_id}", dtype=torch.float32)
+        log_probs_list = [
+            log_probs_batched_gpu[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
+            for i in range(N)
+        ]
+    else:
+        log_probs_list = [
+            log_probs_batched[i, :n_chunks_per_stream[i] * frames_per_chunk, :]
+            for i in range(N)
+        ]
     return log_probs_list, seconds_per_output_frame
 
 

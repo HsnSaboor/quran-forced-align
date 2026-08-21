@@ -95,6 +95,7 @@ from ..onnx_model import (
     run_streaming_log_probs_intra_surah_split_cuda,
     stitch_intra_surah_segments,
 )
+from ..constants import DEFAULT_INTRA_SURAH_MAX_SPLITS
 from ..trellis import build_ext
 
 
@@ -191,7 +192,7 @@ class CUDAEngine:
             self._session, feats_list, return_gpu_tensor=True
         )
 
-    def run_inference_intra_surah_split(self, feats, silence_feature_frame_positions, max_splits=None):
+    def run_inference_intra_surah_split(self, feats, silence_feature_frame_positions, max_splits=DEFAULT_INTRA_SURAH_MAX_SPLITS):
         """Split THIS SINGLE surah's own acoustic-model inference into
         multiple warm-up-overlapped segments at real silence points, run
         via this engine's own batched-inference machinery, instead of one
