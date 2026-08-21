@@ -410,7 +410,7 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
 # hard for the model to recover context around), so a comfortable margin
 # above the observed failure boundary is used rather than the observed
 # boundary itself.
-INTRA_SURAH_SPLIT_WARMUP_CHUNKS = 100
+INTRA_SURAH_SPLIT_WARMUP_CHUNKS = 30
 
 
 def choose_intra_surah_split_points(silence_feature_frame_positions, decode_chunk_len, n_chunks_total,
