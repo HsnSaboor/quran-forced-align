@@ -36,14 +36,17 @@
     transform: scale(1.04);
   }
   .word.repeat-flagged {
-    text-decoration-line: underline;
-    text-decoration-style: dotted;
-    text-decoration-color: rgb(217 119 6); /* amber-600 */
-    text-decoration-thickness: 2px;
+    background-color: rgb(254 243 199 / 0.85); /* amber-100 */
+    border-bottom: 2.5px solid rgb(217 119 6); /* amber-600 */
+    color: rgb(146 64 14); /* amber-900 */
+    border-radius: 4px;
+    padding: 1px 3px;
   }
   .word.repeat-flagged.current {
-    background-color: rgb(217 119 6 / 0.22);
-    color: rgb(180 83 9); /* amber-700 */
+    background-color: rgb(245 158 11 / 0.45);
+    color: rgb(120 53 15);
+    transform: scale(1.06);
+    box-shadow: 0 0 12px rgb(245 158 11 / 0.6);
   }
   /* Amiri renders noticeably better at larger sizes -- this app is built
      around one big continuous reading pane, not compact UI text. */
@@ -171,7 +174,16 @@
         <span class="inline-block w-3 h-3 rounded-sm" style="background-color: rgb(217 119 6 / 0.35)"></span>
         repeat range on timeline
       </span>
-      <span>Click any word (or the timeline) to seek playback there.</span>
+    <!-- Repeat Sites Explorer -->
+    <div id="repeat-explorer-container" class="mb-4 bg-amber-50/90 border border-amber-300 rounded-xl p-3.5 shadow-sm hidden font-ui">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+          <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          Detected Repeat Sites Explorer (<span id="repeat-explorer-count">0</span> sites)
+        </span>
+        <span class="text-xs text-amber-700 font-medium">Click any site to jump & play</span>
+      </div>
+      <div id="repeat-explorer-list" class="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1"></div>
     </div>
 
     <!-- Quran text pane -->
@@ -304,6 +316,9 @@
     prevRepeatBtn: document.getElementById('prev-repeat-btn'),
     nextRepeatBtn: document.getElementById('next-repeat-btn'),
     repeatCount: document.getElementById('repeat-count'),
+    repeatExplorerContainer: document.getElementById('repeat-explorer-container'),
+    repeatExplorerCount: document.getElementById('repeat-explorer-count'),
+    repeatExplorerList: document.getElementById('repeat-explorer-list'),
     playPauseBtn: document.getElementById('play-pause-btn'),
     playIcon: document.getElementById('play-icon'),
     pauseIcon: document.getElementById('pause-icon'),
@@ -632,6 +647,45 @@
       : 'no repeats detected in this surah';
     els.prevRepeatBtn.disabled = repeatSites.length === 0;
     els.nextRepeatBtn.disabled = repeatSites.length === 0;
+
+    if (!els.repeatExplorerContainer || !els.repeatExplorerList) return;
+    if (repeatSites.length === 0) {
+      els.repeatExplorerContainer.classList.add('hidden');
+      els.repeatExplorerList.innerHTML = '';
+      return;
+    }
+
+    els.repeatExplorerContainer.classList.remove('hidden');
+    if (els.repeatExplorerCount) els.repeatExplorerCount.textContent = repeatSites.length;
+    els.repeatExplorerList.innerHTML = '';
+
+    repeatSites.forEach((site, idx) => {
+      // Find matching words
+      const matching = words.filter(w => w.start >= site.secondStart - 0.05 && w.end <= site.secondEnd + 0.05 && w.is_repeat);
+      const sampleText = matching.length ? matching.map(w => w.word).join(' ') : `Site ${idx + 1}`;
+      const aya = matching.length ? matching[0].aya : 1;
+
+      const btn = document.createElement('button');
+      btn.className = 'inline-flex items-center gap-1.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs px-3 py-1.5 rounded-lg shadow-2xs font-ui transition-all hover:scale-102 cursor-pointer';
+      btn.innerHTML = `<span class="font-bold text-amber-700">#${idx + 1} (Aya ${aya})</span> <span class="font-arabic text-sm font-semibold px-1 text-stone-900">${sampleText}</span> <span class="text-stone-400 text-[11px]">${site.firstStart.toFixed(1)}s</span>`;
+      btn.addEventListener('click', () => {
+        currentRepeatSiteIdx = idx;
+        programmaticRepeatSeek = true;
+        els.audio.currentTime = Math.max(0, site.firstStart - REPEAT_JUMP_LEAD_SEC);
+        els.audio.play().catch(() => {});
+        
+        // Scroll the matching word into view
+        const firstMatchingWord = words.find(w => w.start >= site.firstStart - 0.05);
+        if (firstMatchingWord) {
+          const cueIdx = words.indexOf(firstMatchingWord);
+          const dispIdx = cueToDisplayIdx[cueIdx];
+          if (dispIdx !== undefined && wordEls[dispIdx]) {
+            wordEls[dispIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      });
+      els.repeatExplorerList.appendChild(btn);
+    });
   }
 
   // Index into `repeatSites` of the site the "Prev/Next repeat" buttons last
