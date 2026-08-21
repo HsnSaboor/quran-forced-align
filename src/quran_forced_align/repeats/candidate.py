@@ -42,11 +42,7 @@ def _repeat_window_candidate(engine, word_indices, cues, log_probs, combined_tok
         phrase_token_ids, doubled_ids = build_phrase_ids(word_indices, cues, combined_token_ids)
 
     window_log_probs = log_probs[window_start:window_end + 1]
-    if hasattr(window_log_probs, "cpu"):
-        window_log_probs = window_log_probs.cpu().numpy()
-    
-    # Fast local CPU Viterbi for small windows (bypasses CUDA kernel-launch overhead)
-    ext2, path2, margins2 = ctc_forced_align(window_log_probs, doubled_ids, blank_id)
+    ext2, path2, margins2 = engine.forced_align(window_log_probs, doubled_ids, blank_id, compute_margins=False)
     if ext2 is None:
         return None
 

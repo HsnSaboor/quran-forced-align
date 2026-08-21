@@ -422,6 +422,8 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
                 ratio_doubled >= FREE_DECODE_MIN_RATIO_DOUBLED
                 and (ratio_doubled - ratio_single) >= FREE_DECODE_MIN_MARGIN
             )
+            if ratio_doubled < 0.30:
+                continue
 
             cand = _repeat_window_candidate(
                 engine, word_indices, cues, log_probs, combined_token_ids, blank_id,
