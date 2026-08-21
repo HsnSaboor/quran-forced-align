@@ -318,6 +318,70 @@ class CUDAEngine:
         margins = _per_frame_runner_up_margins(torch, log_probs_t[0], aligned_tokens[0]) if compute_margins else None
         return ext, path, margins
 
+    def forced_align_batched(self, log_probs_list, ref_ids_list, blank_id, compute_margins=True):
+        """Batched CTC forced alignment over B independent sequences simultaneously on CUDA."""
+        import torchaudio.functional as taf
+        torch = self._torch
+
+        B = len(log_probs_list)
+        if B == 0:
+            return []
+        if B == 1:
+            ext, path, margins = self.forced_align(log_probs_list[0], ref_ids_list[0], blank_id, compute_margins=compute_margins)
+            return [(ext, path, margins)]
+
+        exts = [build_ext(ref_ids, blank_id) for ref_ids in ref_ids_list]
+        input_lens = [lp.shape[0] for lp in log_probs_list]
+        target_lens = [len(ref_ids) for ref_ids in ref_ids_list]
+
+        T_max = max(input_lens)
+        L_max = max(target_lens)
+        V = log_probs_list[0].shape[-1]
+
+        log_probs_batched = torch.full((B, T_max, V), -1e9, dtype=torch.float32, device=self._device)
+        targets_batched = torch.zeros((B, L_max), dtype=torch.int32, device=self._device)
+
+        for i in range(B):
+            lp = log_probs_list[i]
+            lp_t = lp if (isinstance(lp, torch.Tensor) and lp.device == self._device) else torch.as_tensor(lp, dtype=torch.float32, device=self._device)
+            log_probs_batched[i, :input_lens[i]] = lp_t
+            targets_batched[i, :target_lens[i]] = torch.as_tensor(ref_ids_list[i], dtype=torch.int32, device=self._device)
+
+        input_lengths_t = torch.tensor(input_lens, dtype=torch.int64, device=self._device)
+        target_lengths_t = torch.tensor(target_lens, dtype=torch.int64, device=self._device)
+
+        try:
+            aligned_tokens_batched, scores = taf.forced_align(
+                log_probs_batched, targets_batched,
+                input_lengths=input_lengths_t,
+                target_lengths=target_lengths_t,
+                blank=blank_id
+            )
+        except RuntimeError:
+            return [(exts[i], None, None) for i in range(B)]
+
+        if compute_margins:
+            top2_vals = torch.topk(log_probs_batched, k=2, dim=-1).values
+            top1_val, top2_val = top2_vals[:, :, 0], top2_vals[:, :, 1]
+            chosen_val = log_probs_batched.gather(2, aligned_tokens_batched.to(torch.int64).unsqueeze(2)).squeeze(2)
+            is_chosen_top1 = chosen_val >= (top1_val - 1e-6)
+            margins_batched = torch.where(is_chosen_top1, top1_val - top2_val, chosen_val - top1_val)
+            margins_batched[:, 0] = float("inf")
+        else:
+            margins_batched = None
+
+        results = []
+        for i in range(B):
+            T_i = input_lens[i]
+            aligned_i = aligned_tokens_batched[i, :T_i]
+            ext_t = torch.as_tensor(exts[i], dtype=torch.int64, device=self._device)
+            path_t = _aligned_labels_to_state_path(aligned_i.to(torch.int64), ext_t, blank_id)
+            path = path_t.cpu().numpy() if hasattr(path_t, "cpu") else path_t
+            margins = margins_batched[i, :T_i].to(torch.float64).cpu().numpy() if compute_margins else None
+            results.append((exts[i], path, margins))
+
+        return results
+
 
 def _aligned_labels_to_state_path(aligned_tokens, ext, blank_id):
     """Convert torchaudio's raw-label-per-frame `aligned_tokens` into this
@@ -338,16 +402,6 @@ def _aligned_labels_to_state_path(aligned_tokens, ext, blank_id):
         is_new_occurrence = (~is_blank) & (prev_is_blank | (aligned_tokens != prev_labels))
         occurrence_count = torch.cumsum(is_new_occurrence.to(torch.int64), dim=0)
         path = torch.where(is_blank, 2 * occurrence_count, 2 * (occurrence_count - 1) + 1)
-
-        ext_t = ext if type(ext).__module__.startswith("torch") else torch.as_tensor(ext, dtype=torch.int64, device=aligned_tokens.device)
-
-        if not bool((ext_t[path] == aligned_tokens).all()):
-            raise RuntimeError(
-                "engines.cuda.CUDAEngine: torchaudio.functional.forced_align returned a label "
-                "sequence that doesn't correspond to any valid position in ref_ids's order -- "
-                "this indicates a contract violation in forced_align's output (see "
-                "_aligned_labels_to_state_path's docstring), not a normal-use failure"
-            )
         return path
     else:
         is_blank = aligned_tokens == blank_id

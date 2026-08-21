@@ -233,6 +233,7 @@ def _parallel_chunk_ffmpeg_decode(path: str, duration: float, num_workers: int =
             "-nostdin",
             "-hide_banner",
             "-loglevel", "error",
+            "-threads", "2",
             "-ss", f"{start_sec:.3f}",
             "-i", str(path),
             "-t", f"{chunk_dur:.3f}",
