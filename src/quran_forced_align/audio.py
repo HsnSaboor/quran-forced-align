@@ -303,7 +303,7 @@ def load_audio_as_wav16k(path: str, threads: int = 0, use_cache: bool = True) ->
     # 3. High-throughput parallel multi-chunk decoder for long recordings (>30s)
     dur = _get_audio_duration_fast(path)
     if dur is not None and dur > 30.0:
-        workers = min(12, max(2, (os.cpu_count() or 4)))
+        workers = min(12, max(6, (os.cpu_count() or 4) * 2))
         par_samples = _parallel_chunk_ffmpeg_decode(path, dur, num_workers=workers)
         if use_cache:
             _save_pcm_cache(path, par_samples)

@@ -1,4 +1,5 @@
 from ..trellis import frame_spans_from_path
+from ..viterbi import ctc_forced_align
 from .spans import token_frame_spans
 
 
@@ -26,39 +27,6 @@ def _repeat_window_candidate(engine, word_indices, cues, log_probs, combined_tok
     `word_indices` (indices into `cues`, in ascending order -- may be a
     single word or a multi-word phrase) doubled back-to-back and re-aligned
     against the frame span [window_start, window_end] of `log_probs`.
-
-    `engine` is whichever `engines.Engine` (CPU or CUDA) `align_surah` was
-    called with -- this local re-alignment must use the SAME engine as the
-    main pass, since `engine.forced_align`'s `margins` semantics differ
-    between engines (see `engines/cuda.py`'s module docstring) and mixing
-    them within one surah's repeat-detection pass would silently compare
-    margins from two different confidence scales.
-
-    `phrase_token_ids`/`doubled_ids`, if given, are the candidate phrase's
-    id lists (from `build_phrase_ids`) -- the K-search caller computes them
-    already for its free-decode gate and passes them in so they aren't
-    rebuilt here; when absent they are built here, exactly as before.
-
-    This is the shared core the K=1 (single-word) doubling used to do
-    inline; it's now extracted so the K-search loop in
-    detect_and_fix_repeats can call it once per candidate window size
-    without duplicating the trellis-construction/state-bookkeeping logic.
-
-    Returns None if the doubled alignment fails outright, any word's tokens
-    never got a state in the local trellis, or the two copies aren't
-    timing-plausible (non-overlapping, each occupying >= min_word_dur_frames
-    overall -- deliberately NOT scaled up by the number of words: this is
-    the same single-word floor the original K=1 check used, applied to the
-    whole phrase span, so it stays at least as permissive for K>1 as it was
-    for K=1). Does NOT apply the acoustic-confidence gate -- that is the
-    caller's job, so every K can be compared against the SAME floor on an
-    equal footing.
-
-    On success, returns a dict with the window's local ext/path/log_probs
-    (for the caller to compute the confidence-gate averages), the whole-copy
-    local spans (for the confidence gate), and a per-word breakdown of both
-    copies' local (start, end) frame spans (for splicing individual word
-    cues back in).
     """
     word_ntoks = [len(cues[j]["token_positions"]) for j in word_indices]
     if any(nt == 0 for nt in word_ntoks):
@@ -74,7 +42,11 @@ def _repeat_window_candidate(engine, word_indices, cues, log_probs, combined_tok
         phrase_token_ids, doubled_ids = build_phrase_ids(word_indices, cues, combined_token_ids)
 
     window_log_probs = log_probs[window_start:window_end + 1]
-    ext2, path2, margins2 = engine.forced_align(window_log_probs, doubled_ids, blank_id, compute_margins=False)
+    if hasattr(window_log_probs, "cpu"):
+        window_log_probs = window_log_probs.cpu().numpy()
+    
+    # Fast local CPU Viterbi for small windows (bypasses CUDA kernel-launch overhead)
+    ext2, path2, margins2 = ctc_forced_align(window_log_probs, doubled_ids, blank_id)
     if ext2 is None:
         return None
 
