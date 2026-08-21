@@ -47,6 +47,14 @@ def greedy_ctc_decode_ids(log_probs, blank_id):
     (NOT strings) -- no reference bias, no forced alignment, just the
     model's own free output. Used as an independent cross-check signal for
     repeat detection (see detect_and_fix_repeats)."""
+    if hasattr(log_probs, "argmax"):
+        try:
+            import torch
+            if isinstance(log_probs, torch.Tensor):
+                ids_np = log_probs.argmax(dim=-1).cpu().numpy()
+                return _collapse_ctc_ids(ids_np, blank_id)
+        except ImportError:
+            pass
     return _collapse_ctc_ids(np.argmax(log_probs, axis=-1), blank_id)
 
 

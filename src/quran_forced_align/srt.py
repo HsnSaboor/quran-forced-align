@@ -128,12 +128,18 @@ def _json_safe_float(x):
 
 def emit_json_rich(records, out_path):
     """Write `build_rich_records`'s output as strict, standards-compliant
-    JSON (see `_json_safe_float` for why a plain `json.dump` isn't enough)."""
+    JSON (see `_json_safe_float` for why a plain `json.dump` isn't enough).
+    Uses high-speed SIMD `orjson` when available for instant serialization."""
     safe_records = [
         {**r, "avg_logprob": _json_safe_float(r["avg_logprob"]),
          "min_decision_margin": _json_safe_float(r["min_decision_margin"])}
         for r in records
     ]
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(safe_records, f, ensure_ascii=False, indent=2)
+    try:
+        import orjson
+        with open(out_path, "wb") as f:
+            f.write(orjson.dumps(safe_records, option=orjson.OPT_INDENT_2))
+    except Exception:
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(safe_records, f, ensure_ascii=False, indent=2)
     print(f"wrote {out_path} ({len(records)} word entries, rich)")
