@@ -18,5 +18,5 @@ class CPUEngine:
     def run_inference(self, feats):
         return run_streaming_log_probs(self._session, feats)
 
-    def forced_align(self, log_probs, ref_ids, blank_id):
+    def forced_align(self, log_probs, ref_ids, blank_id, compute_margins=True):
         return ctc_forced_align(log_probs, ref_ids, blank_id)

@@ -328,9 +328,10 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         subsample_factor = offset / frames_per_chunk
         seconds_per_output_frame = FRAME_SHIFT_SEC * subsample_factor
         
-        # Preallocate contiguous GPU tensor for all emissions
-        log_probs_batched_gpu = torch.empty(
-            (N, n_chunks_max * frames_per_chunk, vocab_size), device=f"cuda:{device_id}", dtype=torch.float32
+        # Preallocate contiguous GPU tensor in chunk-first layout [n_chunks_max, N, frames_per_chunk, vocab_size]
+        # This guarantees that each chunk's out_slice is 100% contiguous for direct CUDA pointer IOBinding
+        log_probs_chunks_gpu = torch.empty(
+            (n_chunks_max, N, frames_per_chunk, vocab_size), device=f"cuda:{device_id}", dtype=torch.float32
         )
         
         # Pre-bind state inputs on GPU
@@ -339,10 +340,11 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
                 continue
             if inp.name == "processed_lens":
                 t_arr = torch.zeros((N,), dtype=torch.int64, device=f"cuda:{device_id}")
+                io_binding.bind_input(inp.name, "cuda", device_id, np.int64, [N], t_arr.data_ptr())
             else:
                 dims = [N if d == "N" else d for d in inp.shape]
                 t_arr = torch.zeros(tuple(dims), dtype=torch.float32, device=f"cuda:{device_id}")
-            io_binding.bind_ortvalue_input(inp.name, ort.OrtValue.from_dlpack(to_dlpack(t_arr)))
+                io_binding.bind_input(inp.name, "cuda", device_id, np.float32, dims, t_arr.data_ptr())
 
         for name in state_names:
             io_binding.bind_output("new_" + name, "cuda", device_id)
@@ -358,7 +360,7 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
                 print(f"      [GPU Zipformer2-CTC] Chunk {chunk_idx + 1:5d}/{n_chunks_max} ({pct:5.1f}%) | Elapsed: {el:5.1f}s | Speed: {rt_x:5.1f}x realtime", flush=True)
 
             chunk_slice = feats_gpu[:, ptr:ptr + segment, :].contiguous()
-            out_slice = log_probs_batched_gpu[:, chunk_idx * frames_per_chunk:(chunk_idx + 1) * frames_per_chunk, :]
+            out_slice = log_probs_chunks_gpu[chunk_idx]
 
             io_binding.bind_input("x", "cuda", device_id, np.float32, [N, segment, 80], chunk_slice.data_ptr())
             io_binding.bind_output("log_probs", "cuda", device_id, np.float32, [N, frames_per_chunk, vocab_size], out_slice.data_ptr())
@@ -366,12 +368,15 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
             sess.run_with_iobinding(io_binding)
             outs = io_binding.get_outputs()
 
-            # Rebind states on GPU
+            # Rebind states on GPU (state outputs match state_names index 1:1)
             for state_idx, name in enumerate(state_names):
-                io_binding.bind_ortvalue_input(name, outs[state_idx + 1])
+                io_binding.bind_ortvalue_input(name, outs[state_idx])
             ptr += offset
 
         torch.cuda.synchronize(device_id)
+
+        # Permute chunk-first [n_chunks_max, N, frames_per_chunk, vocab_size] -> stream-first [N, total_frames, vocab_size]
+        log_probs_batched_gpu = log_probs_chunks_gpu.permute(1, 0, 2, 3).contiguous().reshape(N, n_chunks_max * frames_per_chunk, vocab_size)
 
         if return_gpu_tensor:
             log_probs_list = [

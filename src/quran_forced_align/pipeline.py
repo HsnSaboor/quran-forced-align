@@ -126,6 +126,8 @@ Every source of nondeterminism found during implementation was pinned:
     ambiguity since numpy's np.maximum over fixed-size arrays is elementwise
     and doesn't reassociate anything.
 """
+import time
+
 from .audio import load_audio_as_wav16k
 from .confidence import flag_low_confidence_words
 from .constants import (
@@ -165,16 +167,22 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
     without re-loading/re-decoding the audio file a second time.
     """
     log(f"[1/6] Building whole-surah word<->phoneme reference for surah {surah}...")
+    t1_start = time.perf_counter()
     if isinstance(tokens_path, tuple) and len(tokens_path) == 4:
         tok2id, id2tok, blank_id, max_token_len = tokens_path
     else:
         tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
     combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len)
-    log(f"      {len(word_slots)} words total, {len(combined_token_ids)} reference tokens")
+    t1_elapsed = time.perf_counter() - t1_start
+    log(f"      {len(word_slots)} words total, {len(combined_token_ids)} reference tokens [{t1_elapsed:.3f}s]")
 
     log(f"[2/6] Loading + extracting deterministic fbank features: {audio_path}")
+    t2_start = time.perf_counter()
     samples = load_audio_as_wav16k(audio_path)
-    log(f"      {len(samples) / SAMPLE_RATE:.1f}s of audio")
+    t2_audio = time.perf_counter() - t2_start
+    audio_sec = len(samples) / SAMPLE_RATE
+    log(f"      {audio_sec:.1f}s of audio (loaded in {t2_audio:.3f}s, {audio_sec/max(0.001,t2_audio):.0f}x realtime)")
+    t2_fbank_start = time.perf_counter()
     if device == "cuda":
         try:
             feats = compute_fbank_features_gpu(samples, tail_silence_sec=tail_silence_sec, device="cuda")
@@ -182,6 +190,9 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
             feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
     else:
         feats = compute_fbank_features(samples, tail_silence_sec=tail_silence_sec)
+    t2_fbank = time.perf_counter() - t2_fbank_start
+    t2_total = time.perf_counter() - t2_start
+    log(f"      {feats.shape[0]} fbank frames (fbank: {t2_fbank:.3f}s, total stage 2: {t2_total:.3f}s)")
     return tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples
 
 
@@ -197,6 +208,7 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     duplicating this logic. Identical to what `align_surah` itself runs
     for the single-surah, unbatched case.
     """
+    t4_start = time.perf_counter()
     log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
     ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
     if ext is None:
@@ -206,8 +218,10 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
         )
     first_seen, last_seen = frame_spans_from_path(path, len(ext))
     cues = extract_word_frame_spans(word_slots, first_seen, last_seen)
-    log(f"      {len(cues)}/{len(word_slots)} words got timing from the main pass")
+    t4_elapsed = time.perf_counter() - t4_start
+    log(f"      {len(cues)}/{len(word_slots)} words got timing from the main pass [{t4_elapsed:.3f}s]")
 
+    t5_start = time.perf_counter()
     log("[5/6] Detecting + locally re-aligning repeats...")
     min_word_dur_frames = MIN_WORD_DUR / seconds_per_frame
     cues = detect_and_fix_repeats(
@@ -217,9 +231,17 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
         confidence_margin=repeat_confidence_margin,
         max_repeat_window_words=max_repeat_window_words,
     )
+    t5_elapsed = time.perf_counter() - t5_start
+    log(f"      Repeat detection complete [{t5_elapsed:.3f}s]")
 
+    t6_start = time.perf_counter()
     log("[6/6] Computing per-word alignment-confidence signals...")
     cues = flag_low_confidence_words(cues, log_probs, ext, path, margins)
+    t6_elapsed = time.perf_counter() - t6_start
+    log(f"      Confidence scoring complete [{t6_elapsed:.3f}s]")
+
+    total = t4_elapsed + t5_elapsed + t6_elapsed
+    log(f"      Stages 4-6 total: {total:.3f}s (align: {t4_elapsed:.3f}s, repeats: {t5_elapsed:.3f}s, confidence: {t6_elapsed:.3f}s)")
 
     return build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok)
 
@@ -272,28 +294,41 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     """
     def log(msg):
         if verbose:
-            print(msg)
+            print(msg, flush=True)
+
+    t_e2e_start = time.perf_counter()
 
     tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = _build_surah_inputs(
         surah, audio_path, tokens_path, tail_silence_sec, log, device=device
     )
+    audio_sec = len(samples) / SAMPLE_RATE
 
+    t3_start = time.perf_counter()
     log(f"[3/6] Running streaming Zipformer2-CTC on the {device!r} engine (cache-threaded chunks)...")
     engine = get_engine(device)(model_path)
     if intra_surah_split and hasattr(engine, "run_inference_intra_surah_split"):
+        t_silence_start = time.perf_counter()
         silence_samples = find_silence_midpoints(samples, SAMPLE_RATE)
         silence_feature_frames = [pos // FBANK_FRAME_SHIFT_SAMPLES for pos in silence_samples]
-        log(f"      found {len(silence_feature_frames)} candidate silence split point(s)")
+        t_silence = time.perf_counter() - t_silence_start
+        log(f"      found {len(silence_feature_frames)} candidate silence split point(s) [{t_silence:.3f}s]")
         log_probs, seconds_per_frame = engine.run_inference_intra_surah_split(feats, silence_feature_frames)
     else:
         log_probs, seconds_per_frame = engine.run_inference(feats)
-    log(f"      log_probs shape {log_probs.shape}, {seconds_per_frame * 1000:.1f}ms/output-frame")
+    t3_elapsed = time.perf_counter() - t3_start
+    lp_shape = log_probs.shape if hasattr(log_probs, 'shape') else f"tensor({log_probs.size()})"
+    log(f"      log_probs shape {lp_shape}, {seconds_per_frame * 1000:.1f}ms/output-frame [{t3_elapsed:.3f}s, {audio_sec/max(0.001,t3_elapsed):.0f}x realtime]")
 
-    return _align_from_log_probs(
+    records = _align_from_log_probs(
         engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
         anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
         repeat_confidence_margin, max_repeat_window_words, log,
     )
+    t_e2e = time.perf_counter() - t_e2e_start
+    log(f"      ════════════════════════════════════════════════════════════")
+    log(f"      END-TO-END: {t_e2e:.3f}s for {audio_sec:.1f}s audio ({audio_sec/max(0.001,t_e2e):.1f}x realtime)")
+    log(f"      ════════════════════════════════════════════════════════════")
+    return records
 
 
 def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_path: str, tokens_path: str,

@@ -288,7 +288,7 @@ class CUDAEngine:
             return self._last_log_probs_gpu[offset_rows:offset_rows + n_rows]
         return torch.as_tensor(log_probs, dtype=torch.float32, device=self._device)
 
-    def forced_align(self, log_probs, ref_ids, blank_id):
+    def forced_align(self, log_probs, ref_ids, blank_id, compute_margins=True):
         import torchaudio.functional as taf
         torch = self._torch
 
@@ -315,7 +315,7 @@ class CUDAEngine:
         ext_t = torch.as_tensor(ext, dtype=torch.int64, device=self._device)
         path_t = _aligned_labels_to_state_path(aligned_tokens[0].to(torch.int64), ext_t, blank_id)
         path = path_t.cpu().numpy() if hasattr(path_t, "cpu") else path_t
-        margins = _per_frame_runner_up_margins(torch, log_probs_t[0], aligned_tokens[0])
+        margins = _per_frame_runner_up_margins(torch, log_probs_t[0], aligned_tokens[0]) if compute_margins else None
         return ext, path, margins
 
 

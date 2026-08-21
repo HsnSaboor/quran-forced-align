@@ -240,8 +240,33 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
         d = cue["end_frame"] - cue["start_frame"]
         return d < low_ratio * median or d > high_cutoff(cue) * median
 
+    # Precompute path log-probabilities in one single vectorized GPU/CPU operation
+    T = len(path)
+    if not isinstance(log_probs, np.ndarray) and hasattr(log_probs, "is_cuda"):
+        import torch
+        symbols = ext[path]
+        symbols_t = torch.as_tensor(symbols, dtype=torch.int64, device=log_probs.device)
+        path_logprobs = log_probs[torch.arange(T, device=log_probs.device), symbols_t].cpu().numpy()
+    else:
+        path_logprobs = log_probs[np.arange(T), ext[path]]
+    
+    cum_logprobs = np.pad(np.cumsum(path_logprobs), (1, 0))
+
+    # Precompute CPU host array and greedy CTC argmax IDs over the entire surah in ONE operation
+    if isinstance(log_probs, np.ndarray):
+        log_probs_cpu = log_probs
+        full_greedy_ids = np.argmax(log_probs, axis=-1)
+    else:
+        log_probs_cpu = log_probs.cpu().numpy()
+        full_greedy_ids = np.argmax(log_probs_cpu, axis=-1)
+
+    def fast_avg_logprob(sf, ef):
+        if ef < sf:
+            return -np.inf
+        return float((cum_logprobs[ef + 1] - cum_logprobs[sf]) / (ef - sf + 1))
+
     normal_avgs = [
-        avg_logprob_along_path(log_probs, ext, path, c["start_frame"], c["end_frame"])
+        fast_avg_logprob(c["start_frame"], c["end_frame"])
         for c in cues if not is_anomalous(c)
     ]
     baseline_avg = float(np.median(normal_avgs)) if normal_avgs else 0.0
@@ -253,6 +278,9 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
     margin = 2
 
     for i, c in enumerate(cues):
+        if (i + 1) % 500 == 0 or i == n - 1:
+            print(f"      [Repeats] Scanned {i + 1:5d}/{n} words | {len(accepted_fixes)} repeat fixes accepted", flush=True)
+
         if not is_anomalous(c) or not c["token_positions"]:
             continue
 
@@ -324,10 +352,7 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
         window_start_widest = max(0, window_start_widest)
         if window_end <= window_start_widest:
             continue
-        if isinstance(log_probs, np.ndarray):
-            window_ids = np.argmax(log_probs[window_start_widest:window_end + 1], axis=-1)
-        else:
-            window_ids = log_probs[window_start_widest:window_end + 1].argmax(-1).cpu().numpy()
+        window_ids = full_greedy_ids[window_start_widest:window_end + 1]
 
         for K in range(1, k_max + 1):
             j0 = i - K + 1
@@ -409,12 +434,13 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
             # Fix 2's acoustic-confidence gate -- see docstring. Reject this
             # K unless BOTH copies clear the floor; either copy alone being
             # a weak mechanical artifact is disqualifying.
+            window_log_probs_cpu = log_probs_cpu[window_start:window_end + 1]
             avg1 = avg_logprob_along_path(
-                cand["window_log_probs"], cand["ext"], cand["path"],
+                window_log_probs_cpu, cand["ext"], cand["path"],
                 cand["copy1_start_local"], cand["copy1_end_local"],
             )
             avg2 = avg_logprob_along_path(
-                cand["window_log_probs"], cand["ext"], cand["path"],
+                window_log_probs_cpu, cand["ext"], cand["path"],
                 cand["copy2_start_local"], cand["copy2_end_local"],
             )
             bilateral = min(avg1, avg2)
@@ -469,9 +495,9 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
             "is_repeat": is_repeat,
             "token_frame_spans": _shift_token_spans(token_spans_local, window_start),
             "avg_logprob": avg_logprob_along_path(
-                cand["window_log_probs"], cand["ext"], cand["path"], start_local, end_local,
+                log_probs_cpu[window_start:window_start + len(cand["path"])], cand["ext"], cand["path"], start_local, end_local,
             ),
-            "min_decision_margin": per_word_min_margin(cand["margins"], start_local, end_local),
+            "min_decision_margin": per_word_min_margin(cand.get("margins"), start_local, end_local),
         }
 
     fixed = [c for j, c in enumerate(cues) if j not in consumed]

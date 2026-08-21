@@ -1,6 +1,22 @@
+import copy
+from functools import lru_cache
+
 from ..tokenizer import tokenize_with_char_starts
 from .boundary import _boundary_bridge_rules
 from .surah import build_surah_reference
+
+
+# Cache the expensive quran_phonetizer calls — Quran text is 100% static and
+# deterministic, so build_surah_reference(sura_idx) returns the identical
+# result on every call for a given surah. Caching all 114 surahs uses ~50MB
+# of RAM and eliminates ~25s of sequential Python regex/Unicode processing
+# on Al-Baqarah (286 ayahs × ~80ms each).
+@lru_cache(maxsize=128)
+def _cached_surah_reference(sura_idx):
+    """Cache the raw surah reference data (phonemes, word spans, char_info).
+    Returns a tuple of frozen dicts for hashability — callers must deep-copy
+    mutable fields before mutation."""
+    return build_surah_reference(sura_idx)
 
 
 def build_combined_reference(sura_idx, tok2id, max_token_len, include_boundary_tajweed=True):
@@ -17,7 +33,14 @@ def build_combined_reference(sura_idx, tok2id, max_token_len, include_boundary_t
     doesn't need to know about ayah boundaries at all -- they fall out
     naturally from which word slot each token belongs to.
     """
-    refs = build_surah_reference(sura_idx)
+    refs = _cached_surah_reference(sura_idx)
+    # Deep-copy only the mutable fields (char_info dicts get boundary_tajweed_rules
+    # mutated below). The phonemes/word_spans/phoneme_to_word/phoneme_to_char are
+    # read-only and safe to share.
+    refs = [
+        {**ref, "char_info": copy.deepcopy(ref["char_info"])}
+        for ref in refs
+    ]
     combined_token_ids = []
     word_slots = []  # each: {"word","sura","aya","is_ayah_final","token_positions",
                       #        "token_char_idx","letters","boundary_tajweed_rules"}

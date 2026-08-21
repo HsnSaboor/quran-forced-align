@@ -35,7 +35,7 @@ def per_word_min_margin(margins, start_frame, end_frame):
     `avg_logprob_along_path`'s -inf-for-invalid convention of "fail closed
     so comparisons against it never look falsely confident/unconfident").
     """
-    if end_frame < start_frame:
+    if margins is None or end_frame < start_frame:
         return np.inf
     return float(np.min(margins[start_frame:end_frame + 1]))
 
@@ -78,20 +78,30 @@ def flag_low_confidence_words(cues, log_probs, ext, path, margins,
     if not cues:
         return cues
 
-    # A cue that already carries `avg_logprob`/`min_decision_margin` is a
-    # repeat-spliced word (see docstring) -- its signals were already
-    # computed against its OWN local doubled-reference re-alignment by
-    # `repeats.py`'s `_spliced_cue`; reusing THIS function's whole-surah
-    # main-pass ext/path/margins for those frames would silently score the
-    # wrong symbols, since those frames live in a locally re-derived
-    # trellis, not the one these arguments describe.
+    # Precompute path log-probabilities in one single vectorized GPU/CPU operation
+    T = len(path)
+    if not isinstance(log_probs, np.ndarray) and hasattr(log_probs, "is_cuda"):
+        import torch
+        symbols = ext[path]
+        symbols_t = torch.as_tensor(symbols, dtype=torch.int64, device=log_probs.device)
+        path_logprobs = log_probs[torch.arange(T, device=log_probs.device), symbols_t].cpu().numpy()
+    else:
+        path_logprobs = log_probs[np.arange(T), ext[path]]
+    
+    cum_logprobs = np.pad(np.cumsum(path_logprobs), (1, 0))
+
     is_repeat_spliced = ["avg_logprob" in c for c in cues]
 
     for c, already_spliced in zip(cues, is_repeat_spliced):
         if already_spliced:
             continue
-        c["avg_logprob"] = avg_logprob_along_path(log_probs, ext, path, c["start_frame"], c["end_frame"])
-        c["min_decision_margin"] = per_word_min_margin(margins, c["start_frame"], c["end_frame"])
+        sf, ef = c["start_frame"], c["end_frame"]
+        if ef >= sf:
+            c["avg_logprob"] = float((cum_logprobs[ef + 1] - cum_logprobs[sf]) / (ef - sf + 1))
+            c["min_decision_margin"] = float(np.min(margins[sf : ef + 1]))
+        else:
+            c["avg_logprob"] = -np.inf
+            c["min_decision_margin"] = np.inf
 
     baseline_pool = [c for c, spliced in zip(cues, is_repeat_spliced) if not spliced]
     finite_logprobs = [c["avg_logprob"] for c in baseline_pool if np.isfinite(c["avg_logprob"])]
