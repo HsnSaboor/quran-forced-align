@@ -324,6 +324,9 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         padded_feats.append(feats)
 
     io_binding = sess.io_binding()
+    io_binding.clear_binding_inputs()
+    io_binding.clear_binding_outputs()
+
     for inp in inputs:
         if inp.name == "x":
             continue
@@ -358,7 +361,7 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         sess.run_with_iobinding(io_binding)
         outs = io_binding.get_outputs()
 
-        # Output 0 is always log_probs
+        # Output 0 is always log_probs on CPU
         chunk_log_probs = outs[0].numpy()
         if log_probs_batched is None:
             frames_per_chunk = chunk_log_probs.shape[1]
@@ -368,7 +371,7 @@ def run_streaming_log_probs_batched_cuda_iobinding(sess, feats_list, device_id=0
         row_start = chunk_idx * frames_per_chunk
         log_probs_batched[:, row_start:row_start + frames_per_chunk, :] = chunk_log_probs
 
-        # State outputs start at index 1
+        # State outputs start at index 1 on GPU
         for state_idx, name in enumerate(state_names):
             io_binding.bind_ortvalue_input(name, outs[state_idx + 1])
         ptr += offset
