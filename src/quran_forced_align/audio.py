@@ -258,12 +258,34 @@ def _parallel_chunk_ffmpeg_decode(path: str, duration: float, num_workers: int =
     return np.concatenate([r[1] for r in results])
 
 
+def _get_audio_duration_fast(path: str) -> float | None:
+    """Quickly probe audio duration in seconds using soundfile or ffprobe."""
+    try:
+        import soundfile as sf
+        return float(sf.info(path).duration)
+    except Exception:
+        pass
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path)
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return float(res.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
 def load_audio_as_wav16k(path: str, threads: int = 0, use_cache: bool = True) -> np.ndarray:
     """Convert any input audio (mp3/opus/wav/m4a/flac/etc) to 16kHz mono PCM,
     return float32 samples in [-1,1].
     
     Transparently utilizes zero-copy persistent disk caching, direct WAV parsing,
-    C-level FFmpeg streaming, and GPU-accelerated resampling.
+    parallel multi-chunk decoding, and C-level streaming.
     """
     # 1. Zero-copy PCM cache hit (<30ms)
     if use_cache:
@@ -278,32 +300,28 @@ def load_audio_as_wav16k(path: str, threads: int = 0, use_cache: bool = True) ->
             _save_pcm_cache(path, wav_samples)
         return wav_samples
 
-    # 3. High-speed C-level streaming decoding (torchaudio / StreamReader) (~2-4s)
-    ta_samples = _try_load_torchaudio_stream(path)
-    if ta_samples is not None:
+    # 3. High-throughput parallel multi-chunk decoder for long recordings (>30s)
+    dur = _get_audio_duration_fast(path)
+    if dur is not None and dur > 30.0:
+        workers = min(12, max(2, (os.cpu_count() or 4)))
+        par_samples = _parallel_chunk_ffmpeg_decode(path, dur, num_workers=workers)
         if use_cache:
-            _save_pcm_cache(path, ta_samples)
-        return ta_samples
+            _save_pcm_cache(path, par_samples)
+        return par_samples
 
-    # 4. Soundfile + GPU/polyphase resampler (~2-4s)
+    # 4. Soundfile + GPU/polyphase resampler for short recordings (<30s)
     sf_samples = _try_load_soundfile_fast(path)
     if sf_samples is not None:
         if use_cache:
             _save_pcm_cache(path, sf_samples)
         return sf_samples
 
-    # 5. Parallel multi-chunk ffmpeg decoder for long files (>30s)
-    try:
-        import soundfile as sf
-        dur = sf.info(path).duration
-        if dur > 30.0:
-            workers = min(8, max(2, (os.cpu_count() or 4)))
-            par_samples = _parallel_chunk_ffmpeg_decode(path, dur, num_workers=workers)
-            if use_cache:
-                _save_pcm_cache(path, par_samples)
-            return par_samples
-    except Exception:
-        pass
+    # 5. C-level streaming decoding (torchaudio / StreamReader)
+    ta_samples = _try_load_torchaudio_stream(path)
+    if ta_samples is not None:
+        if use_cache:
+            _save_pcm_cache(path, ta_samples)
+        return ta_samples
 
     # 6. Universal high-throughput single ffmpeg pipe fallback
     cmd = [
