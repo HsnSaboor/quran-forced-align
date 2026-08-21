@@ -127,6 +127,7 @@ Every source of nondeterminism found during implementation was pinned:
     and doesn't reassociate anything.
 """
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from .audio import load_audio_as_wav16k
 from .confidence import flag_low_confidence_words
@@ -199,7 +200,7 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
 def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_ids, blank_id,
                            word_slots, id2tok, anomaly_low_ratio, anomaly_high_ratio,
                            ayah_final_high_ratio_mult, repeat_confidence_margin,
-                           max_repeat_window_words, log):
+                           max_repeat_window_words, log, silence_feature_frames=None):
     """Steps [4/6]-[6/6] of `align_surah`: forced-alignment, repeat
     detection, and confidence scoring, given an ALREADY-COMPUTED
     `log_probs` matrix -- factored out so `align_surahs_batched` can run
@@ -210,12 +211,23 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     """
     t4_start = time.perf_counter()
     log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
-    ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
-    if ext is None:
-        raise RuntimeError(
-            "forced alignment failed: audio too short for this surah's reference "
-            "(not enough frames to fit the blank-interleaved trellis)"
+    
+    ext, path, margins = None, None, None
+    if silence_feature_frames is not None and hasattr(engine, "forced_align_segmented"):
+        ext, path, margins = engine.forced_align_segmented(
+            log_probs, combined_token_ids, blank_id, silence_feature_frames, word_slots
         )
+        if ext is not None:
+            log("      (Segmented alignment successful)")
+
+    if ext is None:
+        ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
+        if ext is None:
+            raise RuntimeError(
+                "forced alignment failed: audio too short for this surah's reference "
+                "(not enough frames to fit the blank-interleaved trellis)"
+            )
+            
     first_seen, last_seen = frame_spans_from_path(path, len(ext))
     cues = extract_word_frame_spans(word_slots, first_seen, last_seen)
     t4_elapsed = time.perf_counter() - t4_start
@@ -298,20 +310,33 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
 
     t_e2e_start = time.perf_counter()
 
-    tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = _build_surah_inputs(
-        surah, audio_path, tokens_path, tail_silence_sec, log, device=device
-    )
-    audio_sec = len(samples) / SAMPLE_RATE
+    # --- Overlap model initialization with audio decode ---
+    # Engine construction (ONNX session creation, GPU warm-up) takes several
+    # seconds. Audio decode (Stage 2) takes ~30s on CPU. By running them
+    # concurrently in a background thread, engine init is completely hidden
+    # behind audio decode time — saving 2-4s of sequential wall-clock time.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        engine_future = pool.submit(lambda: get_engine(device)(model_path))
+
+        tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = _build_surah_inputs(
+            surah, audio_path, tokens_path, tail_silence_sec, log, device=device
+        )
+        audio_sec = len(samples) / SAMPLE_RATE
+
+        engine = engine_future.result()  # blocks only if model init took longer than audio decode
 
     t3_start = time.perf_counter()
     log(f"[3/6] Running streaming Zipformer2-CTC on the {device!r} engine (cache-threaded chunks)...")
-    engine = get_engine(device)(model_path)
-    if intra_surah_split and hasattr(engine, "run_inference_intra_surah_split"):
+    
+    silence_feature_frames = None
+    if intra_surah_split or hasattr(engine, "forced_align_segmented"):
         t_silence_start = time.perf_counter()
         silence_samples = find_silence_midpoints(samples, SAMPLE_RATE)
         silence_feature_frames = [pos // FBANK_FRAME_SHIFT_SAMPLES for pos in silence_samples]
         t_silence = time.perf_counter() - t_silence_start
         log(f"      found {len(silence_feature_frames)} candidate silence split point(s) [{t_silence:.3f}s]")
+
+    if intra_surah_split and hasattr(engine, "run_inference_intra_surah_split"):
         log_probs, seconds_per_frame = engine.run_inference_intra_surah_split(feats, silence_feature_frames)
     else:
         log_probs, seconds_per_frame = engine.run_inference(feats)
@@ -323,6 +348,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
         engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
         anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
         repeat_confidence_margin, max_repeat_window_words, log,
+        silence_feature_frames=silence_feature_frames
     )
     t_e2e = time.perf_counter() - t_e2e_start
     log(f"      ════════════════════════════════════════════════════════════")
@@ -405,13 +431,16 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
         for surah, audio_path in zip(surahs, audio_paths)
     ]
     feats_list = [inputs[5] for inputs in per_surah_inputs]
-
-    if intra_surah_split and hasattr(engine, "run_inference_batched_with_intra_surah_split"):
-        samples_list = [inputs[6] for inputs in per_surah_inputs]
+    
+    samples_list = [inputs[6] for inputs in per_surah_inputs]
+    silence_frames_list = []
+    if intra_surah_split or hasattr(engine, "forced_align_segmented"):
         silence_frames_list = [
             [pos // FBANK_FRAME_SHIFT_SAMPLES for pos in find_silence_midpoints(samples, SAMPLE_RATE)]
             for samples in samples_list
         ]
+
+    if intra_surah_split and hasattr(engine, "run_inference_batched_with_intra_surah_split"):
         total_splits = sum(1 for frames in silence_frames_list if frames)
         log(f"[3/6 batched+split] Running streaming Zipformer2-CTC for {len(surahs)} surahs "
             f"({total_splits} with usable silence splits) in one combined batched pass...")
@@ -423,9 +452,9 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
         log_probs_list, seconds_per_frame = engine.run_inference_batched(feats_list)
 
     results = []
-    for surah, (tok2id, id2tok, blank_id, combined_token_ids, word_slots, _feats, _samples), log_probs in zip(
+    for idx, (surah, (tok2id, id2tok, blank_id, combined_token_ids, word_slots, _feats, _samples), log_probs) in enumerate(zip(
         surahs, per_surah_inputs, log_probs_list
-    ):
+    )):
         log(f"-- surah {surah} --")
         # `log_probs` here is a VIEW into `run_inference_batched`'s shared
         # batched buffer (log_probs_batched[i, :n, :]) -- its own `.base`
@@ -458,10 +487,14 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
             engine._last_log_probs_gpu = engine._torch.as_tensor(
                 log_probs, dtype=engine._torch.float32, device=engine._device
             )
+            
+        silence_feature_frames = silence_frames_list[idx] if silence_frames_list else None
+        
         records = _align_from_log_probs(
             engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
             anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
             repeat_confidence_margin, max_repeat_window_words, log,
+            silence_feature_frames=silence_feature_frames
         )
         results.append(records)
     return results

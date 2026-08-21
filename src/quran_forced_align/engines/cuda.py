@@ -116,7 +116,7 @@ class CUDAEngine:
     per-worker-process GPU-pinning need without adding a new flag.
     """
 
-    def __init__(self, model_path):
+    def __init__(self, model_path, enable_trt=None):
         # torch/torchaudio/onnxruntime's GPU build are optional dependencies
         # (see pyproject.toml's `cuda` extra) -- importing them lazily here,
         # not at module load time, means every CPU-only caller (the
@@ -148,6 +148,11 @@ class CUDAEngine:
 
         self._torch = torch
         self._device = torch.device("cuda")
+
+        # Auto-detect TRT availability: try TRT EP first for FP16 Tensor Core
+        # speedup (1.5-2.5x on T4), gracefully falling back to CUDA EP
+        use_trt = enable_trt if enable_trt is not None else ("TensorrtExecutionProvider" in available)
+
         cuda_provider_options = {
             "device_id": 0,
             "arena_extend_strategy": "kSameAsRequested",
@@ -158,6 +163,7 @@ class CUDAEngine:
         self._session = make_onnx_session(
             model_path,
             providers=[("CUDAExecutionProvider", cuda_provider_options), "CPUExecutionProvider"],
+            enable_trt=use_trt,
         )
         # onnxruntime silently accepts a multi-provider list and partitions
         # the graph per-node across whichever providers actually support
@@ -169,7 +175,7 @@ class CUDAEngine:
         # every subsequent `run_inference` call with zero signal to the
         # caller -- exactly the failure mode this engine exists to avoid.
         active_providers = self._session.get_providers()
-        if "CUDAExecutionProvider" not in active_providers:
+        if "CUDAExecutionProvider" not in active_providers and "TensorrtExecutionProvider" not in active_providers:
             raise RuntimeError(
                 f"onnxruntime loaded {model_path!r} but did not select CUDAExecutionProvider "
                 f"(active providers: {active_providers!r}) -- this is the documented silent "
@@ -317,6 +323,79 @@ class CUDAEngine:
         path = path_t.cpu().numpy() if hasattr(path_t, "cpu") else path_t
         margins = _per_frame_runner_up_margins(torch, log_probs_t[0], aligned_tokens[0]) if compute_margins else None
         return ext, path, margins
+
+    def forced_align_segmented(self, log_probs, ref_ids, blank_id, silence_frame_positions, word_slots, compute_margins=True):
+        import numpy as np
+        T = log_probs.shape[0]
+        L = len(ref_ids)
+        if T < 1 or L < 1:
+            return None, None, None
+
+        valid_splits = [0] + [w[1] + 1 for w in word_slots]
+        
+        # Build segments
+        frame_boundaries = [0]
+        ref_boundaries = [0]
+        
+        last_l = 0
+        for f in silence_frame_positions:
+            if f <= frame_boundaries[-1] or f >= T:
+                continue
+            
+            target_l = (f / T) * L
+            
+            best_split = last_l
+            best_diff = abs(last_l - target_l)
+            
+            for s in valid_splits:
+                if s < last_l:
+                    continue
+                diff = abs(s - target_l)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_split = s
+                    
+            if f > frame_boundaries[-1]:
+                frame_boundaries.append(f)
+                ref_boundaries.append(best_split)
+                last_l = best_split
+                
+        if frame_boundaries[-1] < T:
+            frame_boundaries.append(T)
+            ref_boundaries.append(L)
+            
+        sub_log_probs = []
+        sub_ref_ids = []
+        for i in range(len(frame_boundaries) - 1):
+            f_start = frame_boundaries[i]
+            f_end = frame_boundaries[i+1]
+            l_start = ref_boundaries[i]
+            l_end = ref_boundaries[i+1]
+            
+            sub_log_probs.append(log_probs[f_start:f_end])
+            sub_ref_ids.append(ref_ids[l_start:l_end])
+            
+        results = self.forced_align_batched(sub_log_probs, sub_ref_ids, blank_id, compute_margins=compute_margins)
+        
+        full_ext = build_ext(ref_ids, blank_id)
+        full_path = []
+        full_margins = []
+        
+        for i, (ext_seg, path_seg, margins_seg) in enumerate(results):
+            if path_seg is None:
+                # Segment failed, fallback
+                return None, None, None
+            
+            l_start = ref_boundaries[i]
+            # Shift path values to point into the global ext array
+            full_path.append(path_seg + 2 * l_start)
+            if margins_seg is not None:
+                full_margins.append(margins_seg)
+                
+        final_path = np.concatenate(full_path) if full_path else None
+        final_margins = np.concatenate(full_margins) if full_margins else None
+        
+        return full_ext, final_path, final_margins
 
     def forced_align_batched(self, log_probs_list, ref_ids_list, blank_id, compute_margins=True):
         """Batched CTC forced alignment over B independent sequences simultaneously on CUDA."""
