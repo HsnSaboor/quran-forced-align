@@ -43,6 +43,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+# Ensure local package source is in sys.path
+_repo_src = str(Path(__file__).resolve().parent.parent / "src")
+if _repo_src not in sys.path:
+    sys.path.insert(0, _repo_src)
+
 # Terminal coloring helpers
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -582,7 +587,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             intra_surah_split=True,
             prefetch_workers=args.prefetch_workers,
             prefetch_batches=args.prefetch_batches,
-            verbose=False,
+            verbose=True,
         )
 
         align_wall_sec = time.monotonic() - t0_align

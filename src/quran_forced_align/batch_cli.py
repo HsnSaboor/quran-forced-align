@@ -358,6 +358,7 @@ def run_pipelined_batch(
                         repeat_confidence_margin,
                         max_repeat_window_words,
                         null_log,
+                        silence_feature_frames=it.silence_frames,
                         strip_istiaatha=strip_aya0,
                     )
 
@@ -393,8 +394,7 @@ def run_pipelined_batch(
                         progress_callback(res)
                 except Exception as e_surah:
                     errors[s] = e_surah
-                    if verbose:
-                        print(f"[surah {s:03d}] ALIGNMENT/EXPORT FAILED: {type(e_surah).__name__}: {e_surah}")
+                    print(f"  [surah {s:03d}] ALIGNMENT/EXPORT FAILED: {type(e_surah).__name__}: {e_surah}", flush=True)
 
             if verbose:
                 b_words = sum(results[s]["n_words"] for s in valid_surahs if s in results)
@@ -408,8 +408,7 @@ def run_pipelined_batch(
         except Exception as e:
             for s in valid_surahs:
                 errors[s] = e
-            if verbose:
-                print(f"[batch {valid_surahs}] INFERENCE FAILED: {type(e).__name__}: {e}")
+            print(f"  [batch {valid_surahs}] INFERENCE FAILED: {type(e).__name__}: {e}", flush=True)
 
     prod_thread.join()
     total_wall_sec = time.monotonic() - t_start
