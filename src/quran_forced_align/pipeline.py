@@ -152,7 +152,7 @@ from .tokenizer import load_tokens
 from .trellis import frame_spans_from_path
 
 
-def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, device="cpu"):
+def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, device="cpu", include_istiaatha=True):
     """Steps [1/6]-[2/6] of `align_surah`: build the word<->phoneme
     reference and extract fbank features for one surah -- factored out so
     `align_surahs_batched` can run this same per-surah preparation for
@@ -173,7 +173,7 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
         tok2id, id2tok, blank_id, max_token_len = tokens_path
     else:
         tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
-    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len)
+    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=include_istiaatha)
     t1_elapsed = time.perf_counter() - t1_start
     log(f"      {len(word_slots)} words total, {len(combined_token_ids)} reference tokens [{t1_elapsed:.3f}s]")
 
@@ -260,6 +260,7 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
 
 def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
                  device: str = "cpu", intra_surah_split: bool = False,
+                 include_istiaatha: bool = True,
                  anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
                  anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
                  ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
@@ -318,8 +319,8 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     with ThreadPoolExecutor(max_workers=1) as pool:
         engine_future = pool.submit(lambda: get_engine(device)(model_path))
 
-        tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = _build_surah_inputs(
-            surah, audio_path, tokens_path, tail_silence_sec, log, device=device
+        tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = (
+            _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, device=device, include_istiaatha=include_istiaatha)
         )
         audio_sec = len(samples) / SAMPLE_RATE
 
@@ -427,7 +428,7 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
         )
 
     per_surah_inputs = [
-        _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log)
+        _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, include_istiaatha=include_istiaatha)
         for surah, audio_path in zip(surahs, audio_paths)
     ]
     feats_list = [inputs[5] for inputs in per_surah_inputs]

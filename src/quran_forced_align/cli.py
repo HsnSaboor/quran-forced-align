@@ -46,6 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Execution device: 'auto' (default: CUDA if available, else CPU), 'cuda', or 'cpu'.")
     ap.add_argument("--intra-surah-split", action="store_true", default=None,
                     help="Enable parallel intra-surah GPU streaming. Enabled automatically on CUDA by default.")
+    ap.add_argument("--include-istiaatha", action=argparse.BooleanOptionalAction, default=True,
+                    help="Include Isti'adha ('أَعُوذُ بِٱللَّهِ مِنَ ٱلشَّيْطَـٰنِ ٱلرَّجِيمِ') preamble in reference. Use --no-include-istiaatha if recitation audio begins directly with Surah/Basmala.")
     add_tuning_args(ap)
     return ap
 
@@ -89,6 +91,7 @@ def main():
         tokens_path=tokens_path,
         device=device,
         intra_surah_split=intra_surah_split,
+        include_istiaatha=args.include_istiaatha,
         anomaly_low_ratio=args.anomaly_low_ratio,
         anomaly_high_ratio=args.anomaly_high_ratio,
         ayah_final_high_ratio_mult=args.ayah_final_high_ratio_mult,

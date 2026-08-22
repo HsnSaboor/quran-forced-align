@@ -104,6 +104,7 @@ def _prepare_single_surah_worker(
     intra_surah_split: bool,
     opus_dir: str | None,
     transcode_opus_flag: bool,
+    include_istiaatha: bool = True,
 ) -> PreparedSurah:
     """Worker task: loads audio, extracts Fbank features, computes reference tokens,
     detects silence split points, and optionally transcodes to Opus with loudnorm.
@@ -117,7 +118,7 @@ def _prepare_single_surah_worker(
             raise FileNotFoundError(f"audio file for surah {surah:03d} not found in {audio_dir}")
 
     tok2id, id2tok, blank_id, max_token_len = tokens_info
-    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len)
+    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=include_istiaatha)
 
     # Decode audio to 16kHz mono PCM
     samples = load_audio_as_wav16k(audio_path, threads=2)
@@ -166,6 +167,7 @@ def run_pipelined_batch(
     intra_surah_split: bool = True,
     opus_dir: str | None = None,
     transcode_opus: bool = False,
+    include_istiaatha: bool = True,
     prefetch_workers: int = 4,
     prefetch_batches: int = 2,
     anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
@@ -217,6 +219,7 @@ def run_pipelined_batch(
                             intra_surah_split if device == "cuda" else False,
                             opus_dir,
                             transcode_opus,
+                            include_istiaatha,
                         ): s
                         for s in batch_surahs
                     }
@@ -571,9 +574,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="maximum worker concurrency limit",
     )
     ap.add_argument(
-        "--quiet",
-        action="store_true",
-        help="suppress verbose per-batch progress logs",
+        "--include-istiaatha",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="include Isti'adha preamble in reference; use --no-include-istiaatha if audio starts with Surah/Basmala directly",
     )
     add_tuning_args(ap)
     return ap
@@ -654,6 +658,7 @@ def main():
         intra_surah_split=args.intra_surah_split,
         opus_dir=args.opus_dir,
         transcode_opus=args.transcode_opus or (args.opus_dir is not None),
+        include_istiaatha=args.include_istiaatha,
         prefetch_workers=args.prefetch_workers,
         prefetch_batches=args.prefetch_batches,
         anomaly_low_ratio=args.anomaly_low_ratio,
