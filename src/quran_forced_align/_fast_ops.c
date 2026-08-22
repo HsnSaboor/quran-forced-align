@@ -356,7 +356,8 @@ int fast_detect_and_fix_repeats_engine(
             float margin_above_floor = bilateral - confidence_floor;
             if (gap_frames <= gap_artifact_max_frames && margin_above_floor < gap_artifact_min_margin) continue;
             
-            if (!free_decode_pass && (margin_above_floor < 0.3f || gap_frames <= gap_artifact_max_frames)) continue;
+            // If gap is large (e.g. >15 frames = >0.6s pause), it is a distinct restart pause, not a trellis artifact
+            if (!free_decode_pass && gap_frames <= 15 && margin_above_floor < 0.3f) continue;
             
             float cand_score = bilateral + 0.25f * (K - 1);
             if (cand_score > best_score) {
