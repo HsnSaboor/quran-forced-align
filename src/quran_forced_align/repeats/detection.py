@@ -397,9 +397,12 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
     for word_indices, per_word_copy1, per_word_copy2, window_start, ext2, path2 in accepted_fixes.values():
         for j in word_indices:
             s1, e1, tok_spans1 = per_word_copy1[j]
-            s2, e2, tok_spans2 = per_word_copy2[j]
             orig = cues[j]
             fixed.append(_spliced_cue(orig, s1, e1, tok_spans1, window_start, ext2, path2, is_repeat=False))
+        for j in word_indices:
+            s2, e2, tok_spans2 = per_word_copy2[j]
+            orig = cues[j]
             fixed.append(_spliced_cue(orig, s2, e2, tok_spans2, window_start, ext2, path2, is_repeat=True))
             
+    fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
     return fixed
