@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Quran Forced-Alignment Word Player</title>
 
-<!-- Amiri: the Quran-Arabic-optimized typeface, hosted on Google Fonts -->
+<!-- Amiri: Quran Arabic font -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
@@ -25,20 +25,18 @@
 </script>
 
 <style>
-  /* Word highlight transition -- kept out of Tailwind's utility set since it
-     needs to be smooth/cheap on every timeupdate tick (fires ~4x/sec). */
   .word {
     transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
   }
   .word.current {
-    background-color: rgb(16 185 129 / 0.22); /* emerald-500 @ 22% */
-    color: rgb(5 150 105); /* emerald-600 */
+    background-color: rgb(16 185 129 / 0.25);
+    color: rgb(5 150 105);
     transform: scale(1.04);
   }
   .word.repeat-flagged {
-    background-color: rgb(254 243 199 / 0.85); /* amber-100 */
-    border-bottom: 2.5px solid rgb(217 119 6); /* amber-600 */
-    color: rgb(146 64 14); /* amber-900 */
+    background-color: rgb(254 243 199 / 0.85);
+    border-bottom: 2.5px solid rgb(217 119 6);
+    color: rgb(146 64 14);
     border-radius: 4px;
     padding: 1px 3px;
   }
@@ -48,8 +46,6 @@
     transform: scale(1.06);
     box-shadow: 0 0 12px rgb(245 158 11 / 0.6);
   }
-  /* Amiri renders noticeably better at larger sizes -- this app is built
-     around one big continuous reading pane, not compact UI text. */
   .quran-text {
     font-family: 'Amiri', serif;
     line-height: 2.6;
@@ -64,27 +60,19 @@
     align-items: center;
     justify-content: center;
     margin: 0 0.35rem;
-    color: rgb(120 113 108); /* stone-500 */
+    color: rgb(120 113 108);
     font-size: 1.1rem;
   }
-
-  /* Repeat range overlay on the custom timeline -- one absolutely
-     positioned <div> per detected repeat, spanning from the first
-     occurrence's start to the flagged second occurrence's end. */
   .timeline-repeat-range {
     position: absolute;
     top: 0;
     bottom: 0;
-    background-color: rgb(245 158 11 / 0.95); /* amber-500 @ 95% */
-    border: 1px solid rgb(180 83 9); /* amber-700 */
+    background-color: rgb(245 158 11 / 0.95);
+    border: 1px solid rgb(180 83 9);
     border-radius: 2px;
     z-index: 5;
     box-shadow: 0 0 5px rgb(245 158 11 / 0.9);
   }
-  /* Tick mark at each repeat site's first-occurrence start -- a thin
-     brighter sliver on top of the range fill so the exact anchor point
-     (where "Next repeat" will seek to, minus the 5s pad) is visible even
-     when ranges are only a couple of px wide at full-surah zoom. */
   .timeline-repeat-tick {
     position: absolute;
     top: 0;
@@ -101,74 +89,65 @@
 
   <div class="max-w-4xl mx-auto px-4 py-6 md:py-10" dir="ltr">
 
-    <header class="mb-6">
-      <h1 class="text-xl md:text-2xl font-semibold text-stone-800">Forced-Alignment Word Player</h1>
-      <p class="text-sm text-stone-500 mt-1">
-        Word-level CTC forced-alignment output, played back with live word highlighting.
-        Data from <code class="bg-stone-100 px-1 rounded">srt_output/*.json</code> +
-        <code class="bg-stone-100 px-1 rounded">audio/*.mp3</code>.
-      </p>
+    <!-- Header -->
+    <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-2 border-b border-stone-200 pb-4">
+      <div>
+        <h1 class="text-xl md:text-2xl font-bold text-stone-800 tracking-tight">Quran Forced-Alignment Player</h1>
+        <p class="text-xs md:text-sm text-stone-500 mt-0.5">
+          Interactive word-by-word playback with millisecond synchronization and repeat detection.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <label class="flex items-center gap-2 text-xs md:text-sm text-stone-600 select-none cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-stone-200 shadow-sm">
+          <input id="autoscroll-toggle" type="checkbox" checked
+            class="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500/40" />
+          Auto-scroll
+        </label>
+      </div>
     </header>
 
-    <!-- Controls -->
-    <div class="flex flex-wrap items-center gap-3 mb-3">
-      <label class="text-sm font-medium text-stone-600" for="surah-select">Surah</label>
-      <select id="surah-select"
-        class="bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
-               focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500">
-      </select>
-
-      <label class="text-sm font-medium text-stone-600" for="reciter-select">Reciter</label>
-      <select id="reciter-select"
-        class="bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm shadow-sm
-               focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500">
-      </select>
-
-      <div class="h-6 w-px bg-stone-300 mx-1 hidden sm:block"></div>
-
-      <!-- Custom File Pickers -->
-      <label class="cursor-pointer inline-flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-700 px-3 py-2 rounded-lg text-sm transition-colors shadow-sm font-ui">
-        <svg class="w-4 h-4 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
-        <span id="audio-file-label">Pick Audio File…</span>
-        <input id="custom-audio-input" type="file" accept="audio/*,.mp3,.wav,.opus,.m4a" class="hidden" />
+    <!-- File Inputs & Drop Zone -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+      
+      <!-- Audio File Input -->
+      <label id="audio-drop-card" class="relative group cursor-pointer flex items-center gap-3.5 bg-white hover:bg-stone-50 border border-stone-300 hover:border-emerald-500 rounded-xl p-3.5 shadow-sm transition-all">
+        <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs text-stone-400 uppercase font-semibold tracking-wider">Audio Source</div>
+          <div id="audio-file-label" class="text-sm font-medium text-stone-800 truncate">Choose Audio (.opus, .mp3, .wav, .m4a)…</div>
+        </div>
+        <input id="custom-audio-input" type="file" accept="audio/*,.mp3,.wav,.opus,.m4a,.flac,.ogg" class="hidden" />
       </label>
 
-      <label class="cursor-pointer inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 px-3 py-2 rounded-lg text-sm transition-colors shadow-sm font-ui">
-        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-        <span id="json-file-label">Pick JSON / SRT…</span>
+      <!-- JSON / SRT File Input -->
+      <label id="json-drop-card" class="relative group cursor-pointer flex items-center gap-3.5 bg-white hover:bg-stone-50 border border-stone-300 hover:border-emerald-500 rounded-xl p-3.5 shadow-sm transition-all">
+        <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs text-stone-400 uppercase font-semibold tracking-wider">Alignment Data</div>
+          <div id="json-file-label" class="text-sm font-medium text-stone-800 truncate">Choose JSON / SRT File…</div>
+        </div>
         <input id="custom-json-input" type="file" accept=".json,.srt,text/plain" class="hidden" />
       </label>
 
-      <label class="ml-auto flex items-center gap-2 text-sm text-stone-600 select-none cursor-pointer">
-        <input id="autoscroll-toggle" type="checkbox"
-          class="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500/40" />
-        Auto-scroll
-      </label>
     </div>
 
-    <!-- Visually hidden (but NOT display:none) native <audio> element --
-         still does all the real playback work (decoding, currentTime,
-         play/pause state), just with no visible native UI of its own. All
-         visible transport controls live in the floating dock at the bottom
-         of the viewport instead (see #player-dock), which is reachable no
-         matter how far the user has scrolled through a long surah's text.
-         IMPORTANT: must not use `display:none` (Tailwind's `hidden` class)
-         -- Chrome deprioritizes network/buffering activity on display:none
-         media elements, which made currentTime seeks silently fail to
-         actually buffer/seek (seekable stayed [0,0] even after assigning
-         currentTime). Absolute-positioned + zero-size + clipped keeps it
-         painted (off-screen, not display:none) so buffering/seeking behave
-         normally -- the standard "visually hidden but not display:none"
-         pattern (same idea as sr-only utility classes). -->
+    <!-- Hidden Native Audio Transport -->
     <audio id="audio" class="absolute w-0 h-0 overflow-hidden opacity-0 pointer-events-none" preload="metadata"></audio>
 
-    <div id="status" class="text-xs text-stone-400 mb-4 font-mono"></div>
+    <!-- Status Bar -->
+    <div id="status" class="text-xs text-stone-500 mb-3 font-mono bg-white px-3 py-1.5 rounded-lg border border-stone-200 flex items-center justify-between">
+      <span>Ready. Select an audio file and JSON/SRT alignment file or drag & drop them here.</span>
+    </div>
 
     <!-- Legend -->
-    <div class="flex flex-wrap gap-4 mb-4 text-xs text-stone-500">
+    <div class="flex flex-wrap items-center gap-4 mb-4 text-xs text-stone-500 px-1">
       <span class="flex items-center gap-1.5">
         <span class="inline-block w-3 h-3 rounded-sm" style="background-color: rgb(16 185 129 / 0.35)"></span>
-        currently playing word
+        currently recited word
       </span>
       <span class="flex items-center gap-1.5">
         <span class="inline-block w-3 h-3 border-b-2 border-dotted" style="border-color: rgb(217 119 6)"></span>
@@ -178,37 +157,33 @@
         <span class="inline-block w-3 h-3 rounded-sm" style="background-color: rgb(217 119 6 / 0.35)"></span>
         repeat range on timeline
       </span>
+    </div>
+
     <!-- Repeat Sites Explorer -->
     <div id="repeat-explorer-container" class="mb-4 bg-amber-50/90 border border-amber-300 rounded-xl p-3.5 shadow-sm hidden font-ui">
       <div class="flex items-center justify-between mb-2">
         <span class="text-xs font-semibold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
           <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-          Detected Repeat Sites Explorer (<span id="repeat-explorer-count">0</span> sites)
+          Detected Repeat Sites (<span id="repeat-explorer-count">0</span> sites)
         </span>
         <span class="text-xs text-amber-700 font-medium">Click any site to jump & play</span>
       </div>
       <div id="repeat-explorer-list" class="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1"></div>
     </div>
 
-    <!-- Quran text pane -->
-    <main class="bg-white border border-stone-200 rounded-2xl shadow-sm p-6 md:p-10 mb-32">
+    <!-- Quran Text Main Pane -->
+    <main class="bg-white border border-stone-200 rounded-2xl shadow-sm p-6 md:p-10 mb-32 min-h-[300px]">
       <div id="quran-text" class="quran-text text-right" dir="rtl">
-        <span class="text-stone-400 text-base font-ui">Loading…</span>
+        <div class="text-center py-12 text-stone-400 font-ui text-base">
+          <svg class="w-12 h-12 mx-auto text-stone-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+          Please select or drop an Audio file and JSON / SRT alignment file above.
+        </div>
       </div>
     </main>
 
-    <footer class="mt-8 text-xs text-stone-400 text-center mb-32">
-      Serve this directory with <code class="bg-stone-100 px-1 rounded">python -m http.server</code>
-      from the repo root (not <code>file://</code> -- browsers block <code>fetch()</code> of local JSON
-      under the file protocol).
-    </footer>
   </div>
 
-  <!-- Floating playback dock: fixed to the bottom of the viewport (not the
-       document) so it's always reachable regardless of scroll position --
-       important once a surah's text is long enough to scroll past a single
-       screen (up to ~6100 words for Al-Baqarah). Rounded, pill-like, with a
-       backdrop blur so text scrolling underneath it stays legible. -->
+  <!-- Floating Playback Dock -->
   <div class="fixed inset-x-0 bottom-4 px-4 z-20 pointer-events-none" dir="ltr">
     <div id="player-dock"
       class="pointer-events-auto mx-auto max-w-xl bg-white/90 backdrop-blur-md border border-stone-200
@@ -229,11 +204,7 @@
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM11 12l9-6v12z" transform="scale(-1,1) translate(-24,0)"/></svg>
       </button>
 
-      <!-- Custom repeat-aware timeline. Shows colored overlays for each
-           detected repeat's full span (first occurrence -> end of the
-           flagged second occurrence) plus a tick at each site's
-           first-occurrence start -- information the native <audio>
-           scrubber has no way to display. -->
+      <!-- Custom Timeline Scrubber with Repeat Overlays -->
       <div id="timeline" class="relative flex-1 h-3.5 rounded-full bg-stone-200 cursor-pointer select-none overflow-hidden shadow-inner">
         <div id="timeline-repeats" class="absolute inset-y-0 left-0 w-full"></div>
         <div id="timeline-playhead"
@@ -262,50 +233,7 @@
 (() => {
   'use strict';
 
-  // Reciter metadata (id -> {label, ext}). `id` is exactly the filename
-  // suffix used below: audio/{surah:03d}_{id}.{ext}, srt_output/{surah:03d}_{id}.json.
-  // `ext` varies per reciter's source audio (mp3 for the shorter surahs'
-  // Alafasy/Abdul Basit recordings, opus for Al-Baqarah's much longer
-  // Kaseb/Jabir/Ayoub recordings) -- kept per-reciter rather than assuming
-  // one fixed extension for the whole app, since nothing about the player
-  // itself cares which container format the browser's <audio> element
-  // ultimately decodes.
-  const RECITERS = {
-    '4_aligned': { label: 'Mishary Rashid Alafasy 002-4 (GPU Aligned)', ext: 'opus' },
-    downloads: { label: 'Downloads 002.json (Reference ASR)', ext: 'opus' },
-    colab_aligned: { label: 'Colab CUDA GPU Aligned (Surah 2)', ext: 'opus' },
-    sudais: { label: 'Abdur-Rahman As-Sudais (Colab CUDA 222x)', ext: 'mp3' },
-    alafasy: { label: 'Mishary Alafasy', ext: 'mp3' },
-    basit: { label: 'Abdul Basit (murattal)', ext: 'mp3' },
-    kaseb: { label: 'Ahmed Kaseb', ext: 'opus' },
-    jabir: { label: 'Abdullah Ali Jabir', ext: 'opus' },
-    ayoub: { label: 'Mohammad Ayoub', ext: 'opus' },
-    alkasim: { label: 'Abdullah Mohsin Al-Kasim (murattal)', ext: 'opus' },
-    sinan: { label: 'Hammad Sinan (murattal)', ext: 'opus' },
-  };
-
-  // Surah -> [reciter ids] with generated alignment output for that surah.
-  // Kept as an explicit map (rather than probing the filesystem, which
-  // browsers can't do) so a missing file fails loudly via the fetch()
-  // below instead of silently omitting an option.
-  const SURAH_RECITERS = {
-    2: ['4_aligned', 'downloads', 'colab_aligned', 'kaseb', 'jabir', 'ayoub'],
-    7: ['sinan'],
-    18: ['sudais'],
-    35: ['alkasim'],
-    66: ['alafasy', 'basit'],
-    67: ['alafasy'],
-    68: ['alafasy'],
-    69: ['alafasy'],
-    70: ['alafasy'],
-    71: ['alafasy'],
-    72: ['alafasy'],
-  };
-  const SURAHS = Object.keys(SURAH_RECITERS).map(Number).sort((a, b) => a - b);
-
   const els = {
-    select: document.getElementById('surah-select'),
-    reciterSelect: document.getElementById('reciter-select'),
     customAudioInput: document.getElementById('custom-audio-input'),
     customJsonInput: document.getElementById('custom-json-input'),
     audioFileLabel: document.getElementById('audio-file-label'),
@@ -329,30 +257,20 @@
     pauseIcon: document.getElementById('pause-icon'),
   };
 
-  // Seek this many seconds before a repeat site's first-occurrence start
-  // when jumping via Prev/Next repeat, so playback has context leading
-  // into the repeat rather than starting mid-phrase. Clamped to >= 0 at
-  // the call site (a repeat near the very start of the surah has no room
-  // for a full 5s of lead-in).
   const REPEAT_JUMP_LEAD_SEC = 5;
-
   const SPEEDS = [1.0, 1.25, 1.5, 0.75];
   let speedIdx = 0;
 
-  /** @type {{word:string,start:number,end:number,sura:number,aya:number,is_repeat:boolean}[]} */
   let words = [];
-
   let wordEls = [];
   let cueToDisplayIdx = [];
-  let currentIdx = -1;   // display index (into wordEls) currently highlighted, or -1
+  let currentIdx = -1;
   let displayWords = [];
   let repeatSites = [];
-  let totalDuration = 0; // audio.duration, cached on loadedmetadata (0 until then)
-
-  function pad3(n) { return String(n).padStart(3, '0'); }
+  let totalDuration = 0;
 
   function normalizeWordRecords(rawList) {
-    return rawList.map((r, i) => {
+    return rawList.map((r) => {
       const start = Number(r.start_time_sec ?? r.start_sec ?? r.start ?? 0);
       const end = Number(r.end_time_sec ?? r.end_sec ?? r.end ?? (start + 0.5));
       const word = String(r.word ?? r.text ?? '').trim();
@@ -369,7 +287,6 @@
     for (const b of blocks) {
       const lines = b.trim().split('\n').map(l => l.trim()).filter(Boolean);
       if (lines.length < 2) continue;
-      // Time line is index 1 (or 0 if index number missing)
       const timeLine = lines.find(l => l.includes('-->'));
       if (!timeLine) continue;
       const textLines = lines.slice(lines.indexOf(timeLine) + 1).join(' ');
@@ -377,441 +294,111 @@
       if (!match) continue;
       const s = Number(match[1])*3600 + Number(match[2])*60 + Number(match[3]) + Number(match[4])/1000;
       const e = Number(match[5])*3600 + Number(match[6])*60 + Number(match[7]) + Number(match[8])/1000;
-      parsed.push({ word: textLines, start_time_sec: s, end_time_sec: e, is_repeat: false });
+      parsed.push({ word: textLines, start: s, end: e, is_repeat: false });
     }
     return normalizeWordRecords(parsed);
   }
 
-  function applyAlignmentRecords(rawRecords, sourceLabel) {
-    words = normalizeWordRecords(rawRecords);
-    repeatSites = groupRepeatSites(words);
-    ({ displayWords, cueToDisplayIdx } = buildDisplayMapping(words));
-    currentIdx = -1;
-    renderText();
-    renderTimeline();
-    updateRepeatButtons();
-    els.status.textContent = `${words.length} words loaded, ${repeatSites.length} repeat site(s) — [${sourceLabel}]`;
-  }
-
-  function loadCustomAudioFile(file) {
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    els.audio.src = url;
-    els.audio.load();
-    els.audioFileLabel.textContent = file.name.length > 20 ? file.name.slice(0, 18) + '…' : file.name;
-    els.status.textContent = `Loaded audio: ${file.name}`;
-  }
-
-  async function loadCustomAlignmentFile(file) {
-    if (!file) return;
-    els.status.textContent = `Reading ${file.name}…`;
-    const text = await file.text();
-    els.jsonFileLabel.textContent = file.name.length > 20 ? file.name.slice(0, 18) + '…' : file.name;
-    try {
-      if (file.name.endsWith('.json') || text.trim().startsWith('[') || text.trim().startsWith('{')) {
-        const json = JSON.parse(text);
-        const list = Array.isArray(json) ? json : (json.records || json.cues || [json]);
-        applyAlignmentRecords(list, file.name);
-      } else {
-        const list = parseSrtText(text);
-        applyAlignmentRecords(list, file.name);
-      }
-    } catch (err) {
-      els.status.textContent = `Failed to parse ${file.name}: ${err.message}`;
-    }
-  }
-
-  function populateSurahSelect() {
-    for (const s of SURAHS) {
-      const opt = document.createElement('option');
-      opt.value = String(s);
-      opt.textContent = `Surah ${s}`;
-      els.select.appendChild(opt);
-    }
-  }
-
-  /** Rebuild the reciter dropdown's options to match whichever reciters
-   * have data for `surahNum` (see SURAH_RECITERS), preserving the
-   * currently-selected reciter id across the rebuild if it's still
-   * available for the new surah, otherwise falling back to the first
-   * available one. Returns the reciter id that ends up selected. */
-  function populateReciterSelect(surahNum) {
-    const available = SURAH_RECITERS[surahNum] || [];
-    const previouslySelected = els.reciterSelect.value;
-    els.reciterSelect.innerHTML = '';
-    for (const id of available) {
-      const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = RECITERS[id]?.label || id;
-      els.reciterSelect.appendChild(opt);
-    }
-    const next = available.includes(previouslySelected) ? previouslySelected : available[0];
-    els.reciterSelect.value = next;
-    // A surah with only one reciter doesn't need a dropdown to fiddle
-    // with -- disable it rather than hide it, so its presence (and which
-    // reciter is playing) stays visible at a glance.
-    els.reciterSelect.disabled = available.length <= 1;
-    return next;
-  }
-
-  async function loadSurah(surahNum) {
-    const reciterId = populateReciterSelect(surahNum);
-    return loadSurahAndReciter(surahNum, reciterId);
-  }
-
-  async function loadSurahAndReciter(surahNum, reciterId) {
-    const reciterLabel = RECITERS[reciterId]?.label || reciterId;
-    const reciterExt = RECITERS[reciterId]?.ext || 'mp3';
-    els.status.textContent = `loading surah ${surahNum} (${reciterLabel})…`;
-    els.text.innerHTML = '<span class="text-stone-400 text-base font-ui">Loading…</span>';
-    currentIdx = -1;
-
-    const jsonPath = `../srt_output/${pad3(surahNum)}_${reciterId}.json`;
-    const audioPath = `../audio/${pad3(surahNum)}_${reciterId}.${reciterExt}`;
-
-    const res = await fetch(jsonPath);
-    if (!res.ok) {
-      els.status.textContent = `failed to load ${jsonPath} (HTTP ${res.status})`;
-      return;
-    }
-    words = await res.json();
-    repeatSites = groupRepeatSites(words);
-    ({ displayWords, cueToDisplayIdx } = buildDisplayMapping(words));
-    totalDuration = 0;
-
-    els.audio.src = audioPath;
-    els.audio.load();
-
-    renderText();
-    renderTimeline();
-    updateRepeatButtons();
-    els.status.textContent = `${words.length} words loaded, ${repeatSites.length} repeat site(s) — ${jsonPath}`;
-  }
-
-  /** Shared run-detection pass over `words`, used by both groupRepeatSites
-   * and buildDisplayMapping so the "collapse a contiguous is_repeat=true
-   * run, pair it with the equal-length preceding run of is_repeat=false
-   * cues" logic exists in exactly one place. For every index `i` into
-   * `ws`, `firstOccurrenceCueIdx[i]` is:
-   *   - `i` itself, if `ws[i]` is not a repeat cue.
-   *   - the index of the corresponding word in the preceding equal-length
-   *     non-repeat run, if `ws[i]` is a repeat cue and that preceding run
-   *     exists (this is exactly the first occurrence, by construction of
-   *     the splice step in repeats.py's detect_and_fix_repeats: each
-   *     accepted fix appends "primary copy" cues immediately followed by
-   *     "repeat copy" cues, same word count on both sides, cues stay in
-   *     start-time sorted order).
-   *   - `-1`, if `ws[i]` is a repeat cue with no preceding run to pair
-   *     with (defensive only; should not happen against this pipeline's
-   *     real output) -- callers apply their own fallback for this case. */
-  function computeFirstOccurrenceCueIdx(ws) {
-    const firstOccurrenceCueIdx = new Array(ws.length);
-    let i = 0;
-    while (i < ws.length) {
-      if (!ws[i].is_repeat) {
-        firstOccurrenceCueIdx[i] = i;
-        i++;
-        continue;
-      }
-      let j = i;
-      while (j < ws.length && ws[j].is_repeat) j++;
-      const runLen = j - i;
-      const firstRunStartIdx = i - runLen;
-      for (let k = 0; k < runLen; k++) {
-        const cueIdx = i + k;
-        firstOccurrenceCueIdx[cueIdx] = firstRunStartIdx >= 0 ? firstRunStartIdx + k : -1;
-      }
-      i = j;
-    }
-    return firstOccurrenceCueIdx;
-  }
-
-  /** Collapse contiguous runs of `is_repeat=true` word-cues into one "site"
-   * per run, using `computeFirstOccurrenceCueIdx` to locate each run's
-   * paired first-occurrence run. Falls back to just the flagged run's own
-   * span if -- for any reason -- there's no preceding run to pair with
-   * (defensive only; should not happen against this pipeline's real
-   * output). */
-  function groupRepeatSites(ws) {
-    const firstOccurrenceCueIdx = computeFirstOccurrenceCueIdx(ws);
+  function groupRepeatSites(wordList) {
     const sites = [];
     let i = 0;
-    while (i < ws.length) {
-      if (!ws[i].is_repeat) { i++; continue; }
-      let j = i;
-      while (j < ws.length && ws[j].is_repeat) j++;
-      const firstOccIdx = firstOccurrenceCueIdx[i];
-      let firstStart, firstEnd;
-      if (firstOccIdx >= 0) {
-        firstStart = ws[firstOccIdx].start;
-        firstEnd = ws[i - 1].end;
+    while (i < wordList.length) {
+      if (wordList[i].is_repeat) {
+        const startIdx = i;
+        while (i < wordList.length && wordList[i].is_repeat) i++;
+        const endIdx = i;
+        const repeatCues = wordList.slice(startIdx, endIdx);
+        const phrase = repeatCues.map(c => c.word).join(' ');
+        const aya = repeatCues[0].aya;
+        const repStart = repeatCues[0].start;
+        const repEnd = repeatCues[repeatCues.length - 1].end;
+        sites.push({
+          aya,
+          phrase,
+          wordsCount: repeatCues.length,
+          start: repStart,
+          end: repEnd,
+          duration: repEnd - repStart,
+        });
       } else {
-        firstStart = ws[i].start;
-        firstEnd = ws[i].start;
+        i++;
       }
-      sites.push({
-        firstStart,
-        firstEnd,
-        secondStart: ws[i].start,
-        secondEnd: ws[j - 1].end,
-      });
-      i = j;
     }
     return sites;
   }
 
-  /** Build the "one span per real word" display mapping described at
-   * `displayWords`'s declaration, using `computeFirstOccurrenceCueIdx` to
-   * locate each repeat cue's paired first-occurrence cue. Every
-   * is_repeat=false cue gets its own new display slot, in order. Every
-   * is_repeat=true cue is mapped back onto the display slot already
-   * created for its first-occurrence cue -- this is what lets onTimeUpdate
-   * highlight the SAME on-screen word again when playback reaches a
-   * repeat's second occurrence, instead of a duplicate word needing to
-   * exist in the DOM. */
-  function buildDisplayMapping(ws) {
-    const firstOccurrenceCueIdx = computeFirstOccurrenceCueIdx(ws);
-    const dWords = [];
-    const mapping = new Array(ws.length);
-    for (let i = 0; i < ws.length; i++) {
-      const firstOccIdx = firstOccurrenceCueIdx[i];
-      if (firstOccIdx === i) {
-        // Not a repeat cue (or the defensive fallback below already ran
-        // for this index) -- new display slot.
-        mapping[i] = dWords.length;
-        dWords.push({ word: ws[i].word, aya: ws[i].aya });
-      } else if (firstOccIdx >= 0 && mapping[firstOccIdx] !== undefined) {
-        // Map onto the display slot already created for the
-        // corresponding first-occurrence word.
-        mapping[i] = mapping[firstOccIdx];
+  function buildDisplayMapping(wordList) {
+    const disp = [];
+    const mapping = new Array(wordList.length);
+    let canonicalCursor = 0;
+
+    for (let c = 0; c < wordList.length; c++) {
+      const cue = wordList[c];
+      if (!cue.is_repeat) {
+        disp.push({ word: cue.word, aya: cue.aya, sura: cue.sura });
+        mapping[c] = canonicalCursor;
+        canonicalCursor++;
       } else {
-        // Defensive fallback (should not happen against this pipeline's
-        // real output -- see computeFirstOccurrenceCueIdx's comment): no
-        // preceding run to pair with, so this repeat cue gets its own
-        // display slot rather than crashing.
-        mapping[i] = dWords.length;
-        dWords.push({ word: ws[i].word, aya: ws[i].aya });
-      }
-    }
-    return { displayWords: dWords, cueToDisplayIdx: mapping };
-  }
-
-  /** Denominator for the timeline's 0-100% mapping: `totalDuration` (real
-   * audio.duration, once known via loadedmetadata) if available, else the
-   * last word's end time as an estimate, else 1 (avoids division by zero
-   * before any data has loaded). Shared by renderTimeline,
-   * updateTimelinePlayhead, and seekFromTimelineClick so all three treat
-   * "duration unknown yet" the same way. */
-  function timelineDenom() {
-    return totalDuration || (words.length ? words[words.length - 1].end : 0) || 1;
-  }
-
-  function renderTimeline() {
-    els.timelineRepeats.innerHTML = '';
-    if (!repeatSites.length) return;
-    // Use the last word's end as the timeline's 0-100% denominator until
-    // audio.duration is known (loadedmetadata may fire after this render);
-    // updateTimelinePlayhead below re-derives percentages the same way on
-    // every tick, so this only affects the repeat-range overlay's initial
-    // paint, not correctness of the playhead.
-    const denom = timelineDenom();
-
-    for (const site of repeatSites) {
-      const startPct = (site.firstStart / denom) * 100;
-      const endPct = (site.secondEnd / denom) * 100;
-      const range = document.createElement('div');
-      range.className = 'timeline-repeat-range';
-      range.style.left = `${startPct}%`;
-      range.style.width = `${Math.max(endPct - startPct, 0.8)}%`;
-      range.style.minWidth = '5px';
-      range.title = `repeat: ${site.firstStart.toFixed(1)}s – ${site.secondEnd.toFixed(1)}s`;
-      els.timelineRepeats.appendChild(range);
-
-      const tick = document.createElement('div');
-      tick.className = 'timeline-repeat-tick';
-      tick.style.left = `${startPct}%`;
-      els.timelineRepeats.appendChild(tick);
-    }
-  }
-
-  function updateTimelinePlayhead() {
-    const denom = timelineDenom();
-    const pct = Math.min(100, Math.max(0, (els.audio.currentTime / denom) * 100));
-    els.timelinePlayhead.style.left = `${pct}%`;
-  }
-
-  function seekFromTimelineClick(evt) {
-    if (!words.length) return;
-    const rect = els.timeline.getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
-    els.audio.currentTime = frac * timelineDenom();
-  }
-
-  function updateRepeatButtons() {
-    els.repeatCount.textContent = repeatSites.length
-      ? `${repeatSites.length} repeat site${repeatSites.length === 1 ? '' : 's'} in this surah`
-      : 'no repeats detected in this surah';
-    els.prevRepeatBtn.disabled = repeatSites.length === 0;
-    els.nextRepeatBtn.disabled = repeatSites.length === 0;
-
-    if (!els.repeatExplorerContainer || !els.repeatExplorerList) return;
-    if (repeatSites.length === 0) {
-      els.repeatExplorerContainer.classList.add('hidden');
-      els.repeatExplorerList.innerHTML = '';
-      return;
-    }
-
-    els.repeatExplorerContainer.classList.remove('hidden');
-    if (els.repeatExplorerCount) els.repeatExplorerCount.textContent = repeatSites.length;
-    els.repeatExplorerList.innerHTML = '';
-
-    repeatSites.forEach((site, idx) => {
-      // Find matching words
-      const matching = words.filter(w => w.start >= site.secondStart - 0.05 && w.end <= site.secondEnd + 0.05 && w.is_repeat);
-      const sampleText = matching.length ? matching.map(w => w.word).join(' ') : `Site ${idx + 1}`;
-      const aya = matching.length ? matching[0].aya : 1;
-
-      const btn = document.createElement('button');
-      btn.className = 'inline-flex items-center gap-1.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs px-3 py-1.5 rounded-lg shadow-2xs font-ui transition-all hover:scale-102 cursor-pointer';
-      btn.innerHTML = `<span class="font-bold text-amber-700">#${idx + 1} (Aya ${aya})</span> <span class="font-arabic text-sm font-semibold px-1 text-stone-900">${sampleText}</span> <span class="text-stone-400 text-[11px]">${site.firstStart.toFixed(1)}s</span>`;
-      btn.addEventListener('click', () => {
-        currentRepeatSiteIdx = idx;
-        programmaticRepeatSeek = true;
-        els.audio.currentTime = Math.max(0, site.firstStart - REPEAT_JUMP_LEAD_SEC);
-        els.audio.play().catch(() => {});
-        
-        // Scroll the matching word into view
-        const firstMatchingWord = words.find(w => w.start >= site.firstStart - 0.05);
-        if (firstMatchingWord) {
-          const cueIdx = words.indexOf(firstMatchingWord);
-          const dispIdx = cueToDisplayIdx[cueIdx];
-          if (dispIdx !== undefined && wordEls[dispIdx]) {
-            wordEls[dispIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        let found = -1;
+        for (let back = canonicalCursor - 1; back >= Math.max(0, canonicalCursor - 30); back--) {
+          if (disp[back].word === cue.word && disp[back].aya === cue.aya) {
+            found = back;
+            break;
           }
         }
-      });
-      els.repeatExplorerList.appendChild(btn);
-    });
-  }
-
-  // Index into `repeatSites` of the site the "Prev/Next repeat" buttons last
-  // jumped to, or -1 if the playhead's current position wasn't reached via
-  // those buttons (initial load, a manual word/timeline click, or dragging
-  // the native scrubber). Tracking this explicitly -- rather than comparing
-  // `els.audio.currentTime` against `site.firstStart` on every click -- is
-  // required because a jump seeks to `firstStart - REPEAT_JUMP_LEAD_SEC`,
-  // i.e. BEFORE the site's own firstStart: comparing the post-jump
-  // currentTime against firstStart again on the next click would find the
-  // SAME site every time (currentTime < firstStart still), so repeated
-  // clicks could never advance past the very first site. See
-  // `resetRepeatTrackingOnManualSeek` for how this gets invalidated on any
-  // seek this function didn't itself cause.
-  let currentRepeatSiteIdx = -1;
-  let programmaticRepeatSeek = false;
-
-  /** Jump to `firstStart - REPEAT_JUMP_LEAD_SEC` (clamped to >= 0) for the
-   * next/previous repeat site, cycling with wraparound. If the playhead
-   * wasn't already sitting at a site reached via these buttons (tracked via
-   * `currentRepeatSiteIdx`), falls back to locating the nearest site
-   * relative to the current playhead time -- so clicking Next/Prev after a
-   * manual seek (word click, timeline click, native scrubber drag) starts
-   * from where the user actually is, not wherever the buttons last left
-   * off. No-op if there are no repeats. */
-  function jumpToRepeat(direction) {
-    if (!repeatSites.length) return;
-
-    let targetIdx;
-    if (currentRepeatSiteIdx >= 0) {
-      targetIdx = (currentRepeatSiteIdx + direction + repeatSites.length) % repeatSites.length;
-    } else {
-      const t = els.audio.currentTime;
-      const EPS = 0.05;
-      if (direction > 0) {
-        const foundIdx = repeatSites.findIndex(s => s.firstStart > t + EPS);
-        targetIdx = foundIdx >= 0 ? foundIdx : 0;
-      } else {
-        let lastEarlier = -1;
-        for (let k = 0; k < repeatSites.length; k++) {
-          if (repeatSites[k].firstStart < t - EPS) lastEarlier = k;
-        }
-        targetIdx = lastEarlier >= 0 ? lastEarlier : repeatSites.length - 1;
+        mapping[c] = found >= 0 ? found : Math.max(0, canonicalCursor - 1);
       }
     }
-
-    currentRepeatSiteIdx = targetIdx;
-    const target = repeatSites[targetIdx];
-    programmaticRepeatSeek = true;
-    els.audio.currentTime = Math.max(0, target.firstStart - REPEAT_JUMP_LEAD_SEC);
-    els.audio.play().catch(() => {});
-  }
-
-  /** Invalidate `currentRepeatSiteIdx` on any seek NOT caused by
-   * jumpToRepeat itself, so Next/Prev re-anchors off the real playhead
-   * position after a manual word click, timeline click, or native
-   * scrubber drag instead of continuing to cycle from the last
-   * button-driven position. */
-  function resetRepeatTrackingOnManualSeek() {
-    if (programmaticRepeatSeek) {
-      programmaticRepeatSeek = false;
-      return;
-    }
-    currentRepeatSiteIdx = -1;
+    return { displayWords: disp, cueToDisplayIdx: mapping };
   }
 
   function renderText() {
     els.text.innerHTML = '';
     wordEls = new Array(displayWords.length);
 
-    // Which display slots are the target of at least one is_repeat=true
-    // cue -- used only to add the dotted "repeat-flagged" underline to the
-    // ACTUAL Quran word (once), never to render a second copy of it.
-    const repeatedDisplaySlots = new Set();
-    words.forEach((w, i) => {
-      if (w.is_repeat) repeatedDisplaySlots.add(cueToDisplayIdx[i]);
-    });
+    if (displayWords.length === 0) {
+      els.text.innerHTML = '<div class="text-center py-12 text-stone-400 font-ui text-base">No words loaded.</div>';
+      return;
+    }
 
-    // First cue-index at which each display slot's word starts playing
-    // (its first occurrence) -- used so clicking a word seeks to where it
-    // is first recited, not to a later repeat's timestamp.
-    const displaySlotFirstCueStart = new Array(displayWords.length).fill(null);
-    words.forEach((w, i) => {
-      const d = cueToDisplayIdx[i];
-      if (displaySlotFirstCueStart[d] === null) displaySlotFirstCueStart[d] = w.start;
-    });
+    const repeatedSlots = new Set();
+    for (let c = 0; c < words.length; c++) {
+      if (words[c].is_repeat) repeatedSlots.add(cueToDisplayIdx[c]);
+    }
+
+    const firstCueStart = new Array(displayWords.length);
+    for (let c = 0; c < words.length; c++) {
+      const d = cueToDisplayIdx[c];
+      if (firstCueStart[d] === undefined) firstCueStart[d] = words[c].start;
+    }
 
     let currentAya = null;
     let ayaWrap = null;
 
     displayWords.forEach((w, d) => {
       if (w.aya !== currentAya) {
-        // Close previous ayah with its end-of-verse marker (only if one was
-        // open AND it was a real ayah -- aya 0 is the istiaatha preamble
-        // ("أَعُوذُ بِٱللَّهِ...") which the reference builder prepends
-        // before ayah 1 and isn't part of the Quranic text, so it gets no
-        // ۝ marker).
-        if (ayaWrap && currentAya !== 0) {
+        if (ayaWrap && currentAya !== null) {
           const marker = document.createElement('span');
           marker.className = 'ayah-end-marker';
-          marker.textContent = `\u06DD${toArabicIndicDigits(currentAya)}`; // ۝ + ayah number
+          marker.textContent = `\u06DD${toArabicIndicDigits(currentAya)}`;
           ayaWrap.appendChild(marker);
         }
         currentAya = w.aya;
-        ayaWrap = document.createElement('span');
-        ayaWrap.className = 'ayah-group';
+        ayaWrap = document.createElement('div');
+        ayaWrap.className = 'ayah-group inline';
         ayaWrap.dataset.aya = String(currentAya);
         els.text.appendChild(ayaWrap);
       }
 
-      const isRepeated = repeatedDisplaySlots.has(d);
+      const isRep = repeatedSlots.has(d);
       const span = document.createElement('span');
-      span.className = 'word cursor-pointer rounded px-0.5' + (isRepeated ? ' repeat-flagged' : '');
+      span.className = 'word cursor-pointer rounded px-0.5 inline-block select-none' + (isRep ? ' repeat-flagged' : '');
       span.textContent = w.word;
-      span.title = isRepeated
-        ? 'reciter repeats this word/phrase later (hifz practice) — click to play from its first occurrence'
-        : '';
       span.addEventListener('click', () => {
-        els.audio.currentTime = displaySlotFirstCueStart[d] ?? 0;
-        els.audio.play().catch(() => {});
+        if (firstCueStart[d] !== undefined) {
+          els.audio.currentTime = firstCueStart[d];
+          els.audio.play().catch(() => {});
+        }
       });
 
       ayaWrap.appendChild(span);
@@ -819,7 +406,6 @@
       wordEls[d] = span;
     });
 
-    // Close the final ayah's marker.
     if (ayaWrap && currentAya !== null) {
       const marker = document.createElement('span');
       marker.className = 'ayah-end-marker';
@@ -833,10 +419,60 @@
     return String(n).split('').map(d => ARABIC_INDIC_DIGITS[Number(d)] ?? d).join('');
   }
 
-  /** Binary search over `words` (sorted, non-overlapping by construction --
-   * see repeats.py's splice step) for the index whose [start, end) contains
-   * `t`, or -1 if `t` falls in a gap (istiaatha lead-in, inter-word
-   * silence, or past the last word). */
+  function renderTimeline() {
+    els.timelineRepeats.innerHTML = '';
+    const dur = totalDuration > 0 ? totalDuration : (words.length > 0 ? words[words.length - 1].end : 1);
+    if (!dur || dur <= 0) return;
+
+    repeatSites.forEach(s => {
+      const l = (s.start / dur) * 100;
+      const w = Math.max(0.3, (s.duration / dur) * 100);
+
+      const range = document.createElement('div');
+      range.className = 'timeline-repeat-range';
+      range.style.left = `${l}%`;
+      range.style.width = `${w}%`;
+      range.title = `Repeat at ${formatSec(s.start)}: ${s.phrase}`;
+      els.timelineRepeats.appendChild(range);
+
+      const tick = document.createElement('div');
+      tick.className = 'timeline-repeat-tick';
+      tick.style.left = `${l}%`;
+      els.timelineRepeats.appendChild(tick);
+    });
+
+    if (repeatSites.length > 0) {
+      els.repeatExplorerContainer.classList.remove('hidden');
+      els.repeatExplorerCount.textContent = repeatSites.length;
+      els.repeatExplorerList.innerHTML = '';
+
+      repeatSites.forEach((s, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'inline-flex items-center gap-1 text-xs bg-white/90 hover:bg-amber-100 border border-amber-300 rounded px-2 py-1 text-amber-900 transition-colors shadow-2xs font-amiri';
+        btn.innerHTML = `<span class="font-mono text-[10px] text-amber-600">${formatSec(s.start)}</span> <span class="font-bold">${s.phrase}</span>`;
+        btn.addEventListener('click', () => {
+          els.audio.currentTime = Math.max(0, s.start - REPEAT_JUMP_LEAD_SEC);
+          els.audio.play().catch(() => {});
+        });
+        els.repeatExplorerList.appendChild(btn);
+      });
+    } else {
+      els.repeatExplorerContainer.classList.add('hidden');
+    }
+  }
+
+  function formatSec(s) {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${String(sec).padStart(2, '0')}`;
+  }
+
+  function updateTimelinePlayhead() {
+    const dur = totalDuration > 0 ? totalDuration : (words.length > 0 ? words[words.length - 1].end : 1);
+    const pct = dur > 0 ? Math.min(100, Math.max(0, (els.audio.currentTime / dur) * 100)) : 0;
+    els.timelinePlayhead.style.left = `${pct}%`;
+  }
+
   function findWordIndexAtTime(t) {
     let lo = 0, hi = words.length - 1;
     while (lo <= hi) {
@@ -852,12 +488,6 @@
   function onTimeUpdate() {
     const t = els.audio.currentTime;
     const cueIdx = findWordIndexAtTime(t);
-    // Map the CUE index (a position in `words`, which still has one entry
-    // per occurrence -- including repeats) to its DISPLAY index (a
-    // position in `displayWords`/`wordEls`, which has exactly one span per
-    // real on-screen word). This is what makes the highlight jump BACK to
-    // the same word when playback reaches a repeat's second occurrence,
-    // rather than needing a second span to exist for it.
     const idx = cueIdx >= 0 ? cueToDisplayIdx[cueIdx] : -1;
     if (idx === currentIdx) return;
 
@@ -874,6 +504,77 @@
     }
   }
 
+  function applyAlignmentRecords(rawRecords, sourceLabel) {
+    words = normalizeWordRecords(rawRecords);
+    repeatSites = groupRepeatSites(words);
+    ({ displayWords, cueToDisplayIdx } = buildDisplayMapping(words));
+    currentIdx = -1;
+    renderText();
+    renderTimeline();
+    els.status.innerHTML = `<span><strong class="text-stone-700">${words.length}</strong> words loaded, <strong class="text-amber-700">${repeatSites.length}</strong> repeat site(s) — <code class="bg-stone-100 px-1 rounded">${sourceLabel}</code></span>`;
+  }
+
+  function loadCustomAudioFile(file) {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    els.audio.src = url;
+    els.audio.load();
+    els.audioFileLabel.textContent = file.name;
+    els.status.innerHTML = `<span>Audio loaded: <code class="bg-stone-100 px-1 rounded">${file.name}</code></span>`;
+  }
+
+  async function loadCustomAlignmentFile(file) {
+    if (!file) return;
+    els.status.innerHTML = `<span>Parsing <code class="bg-stone-100 px-1 rounded">${file.name}</code>…</span>`;
+    const text = await file.text();
+    els.jsonFileLabel.textContent = file.name;
+    try {
+      if (file.name.endsWith('.json') || text.trim().startsWith('[') || text.trim().startsWith('{')) {
+        const json = JSON.parse(text);
+        let list = [];
+        if (Array.isArray(json)) {
+          list = json;
+        } else if (json.verses && Array.isArray(json.verses)) {
+          for (const v of json.verses) {
+            for (const w of (v.words || [])) {
+              list.push({
+                word: w.text || w.word,
+                start: (w.startTime ?? w.start ?? 0) > 1000 ? (w.startTime / 1000) : (w.startTime ?? w.start),
+                end: (w.endTime ?? w.end ?? 0) > 1000 ? (w.endTime / 1000) : (w.endTime ?? w.end),
+                aya: v.verseId ?? v.aya ?? 1,
+                sura: json.metadata?.surah_id ?? 1
+              });
+            }
+          }
+        } else if (json.records || json.cues) {
+          list = json.records || json.cues;
+        }
+        applyAlignmentRecords(list, file.name);
+      } else {
+        const list = parseSrtText(text);
+        applyAlignmentRecords(list, file.name);
+      }
+    } catch (err) {
+      els.status.innerHTML = `<span class="text-rose-600">Failed to parse ${file.name}: ${err.message}</span>`;
+    }
+  }
+
+  function jumpToRepeat(dir) {
+    if (repeatSites.length === 0) return;
+    const t = els.audio.currentTime;
+    let target = null;
+    if (dir > 0) {
+      target = repeatSites.find(s => s.start > t + 0.5) || repeatSites[0];
+    } else {
+      const prevs = repeatSites.filter(s => s.start < t - 1.0);
+      target = prevs.length > 0 ? prevs[prevs.length - 1] : repeatSites[repeatSites.length - 1];
+    }
+    if (target) {
+      els.audio.currentTime = Math.max(0, target.start - REPEAT_JUMP_LEAD_SEC);
+      els.audio.play().catch(() => {});
+    }
+  }
+
   els.speedBtn.addEventListener('click', () => {
     speedIdx = (speedIdx + 1) % SPEEDS.length;
     els.audio.playbackRate = SPEEDS[speedIdx];
@@ -885,28 +586,15 @@
     else els.audio.pause();
   });
 
-  // Sync the dock's play/pause icon with the <audio> element's ACTUAL
-  // play state via its own 'play'/'pause' events, rather than toggling the
-  // icon directly inside the click handler above -- that way every path
-  // that starts/stops playback (this button, jumpToRepeat's el.play() call,
-  // a word click's el.play() call, or the audio finishing/erroring) keeps
-  // the icon correct with a single source of truth instead of needing each
-  // call site to remember to flip it too.
   els.audio.addEventListener('play', () => {
     els.playIcon.classList.add('hidden');
     els.pauseIcon.classList.remove('hidden');
-    els.playPauseBtn.setAttribute('aria-label', 'Pause');
   });
   els.audio.addEventListener('pause', () => {
     els.pauseIcon.classList.add('hidden');
     els.playIcon.classList.remove('hidden');
-    els.playPauseBtn.setAttribute('aria-label', 'Play');
   });
 
-  els.select.addEventListener('change', () => loadSurah(Number(els.select.value)));
-  els.reciterSelect.addEventListener('change', () =>
-    loadSurahAndReciter(Number(els.select.value), els.reciterSelect.value));
-  
   els.customAudioInput.addEventListener('change', (e) => {
     if (e.target.files && e.target.files[0]) loadCustomAudioFile(e.target.files[0]);
   });
@@ -914,13 +602,12 @@
     if (e.target.files && e.target.files[0]) loadCustomAlignmentFile(e.target.files[0]);
   });
 
-  // Drag and Drop anywhere on the page
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', (e) => {
     e.preventDefault();
     if (!e.dataTransfer || !e.dataTransfer.files) return;
     for (const f of e.dataTransfer.files) {
-      if (f.type.startsWith('audio/') || /\.(mp3|wav|opus|m4a|ogg)$/i.test(f.name)) {
+      if (f.type.startsWith('audio/') || /\.(mp3|wav|opus|m4a|flac|ogg)$/i.test(f.name)) {
         loadCustomAudioFile(f);
       } else if (/\.(json|srt)$/i.test(f.name)) {
         loadCustomAlignmentFile(f);
@@ -929,18 +616,21 @@
   });
 
   els.audio.addEventListener('timeupdate', () => { onTimeUpdate(); updateTimelinePlayhead(); });
-  els.audio.addEventListener('seeking', resetRepeatTrackingOnManualSeek);
   els.audio.addEventListener('loadedmetadata', () => {
     totalDuration = els.audio.duration || 0;
-    renderTimeline();       // re-paint repeat ranges against the now-known real duration
+    renderTimeline();
     updateTimelinePlayhead();
   });
-  els.timeline.addEventListener('click', seekFromTimelineClick);
+  els.timeline.addEventListener('click', (e) => {
+    const dur = totalDuration > 0 ? totalDuration : (words.length > 0 ? words[words.length - 1].end : 0);
+    if (!dur) return;
+    const rect = els.timeline.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    els.audio.currentTime = pct * dur;
+  });
+
   els.prevRepeatBtn.addEventListener('click', () => jumpToRepeat(-1));
   els.nextRepeatBtn.addEventListener('click', () => jumpToRepeat(1));
-
-  populateSurahSelect();
-  loadSurah(SURAHS[0]);
 })();
 </script>
 </body>
