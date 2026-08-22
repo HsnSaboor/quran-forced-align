@@ -7,7 +7,9 @@ import os
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Optional, Tuple
+import shutil
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 HF_REPO = "Saboorhsn/quran-stt-onnx"
 DEFAULT_FP16_MODEL = "zipformer_p_arabic_v3.1.fp16.onnx"
@@ -16,6 +18,50 @@ DEFAULT_INT8_MODEL = "zipformer_p_arabic_v3.1.int8.onnx"
 DEFAULT_TOKENS = "tokens.txt"
 
 CACHE_DIR = Path(os.environ.get("QURAN_FORCED_ALIGN_CACHE_DIR", Path.home() / ".cache" / "quran-forced-align"))
+
+
+def verify_colab_environment() -> Dict[str, Any]:
+    """Verify runtime environment, GPU availability, and library sanity."""
+    is_colab = "google.colab" in sys.modules or os.path.exists("/content")
+    gpu_available = False
+    gpu_name = None
+    cuda_version = None
+    ort_gpu_ok = False
+    ffmpeg_ok = shutil.which("ffmpeg") is not None
+
+    try:
+        import torch
+        gpu_available = torch.cuda.is_available()
+        if gpu_available:
+            gpu_name = torch.cuda.get_device_name(0)
+            cuda_version = torch.version.cuda
+    except Exception:
+        pass
+
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        ort_gpu_ok = "CUDAExecutionProvider" in providers
+    except Exception:
+        pass
+
+    status = {
+        "is_colab": is_colab,
+        "gpu_available": gpu_available,
+        "gpu_name": gpu_name,
+        "cuda_version": cuda_version,
+        "ort_gpu_ok": ort_gpu_ok,
+        "ffmpeg_installed": ffmpeg_ok,
+    }
+
+    if is_colab and gpu_available and not ort_gpu_ok:
+        print("⚠️ [Colab Warning] GPU detected but onnxruntime-gpu is not linked properly.")
+        print("   Fix: Run `pip uninstall -y onnxruntime && pip install onnxruntime-gpu==1.20.2`")
+
+    if not ffmpeg_ok:
+        print("⚠️ [Warning] ffmpeg not found on PATH. Audio decoding will fail.")
+
+    return status
 
 
 def get_hf_url(filename: str) -> str:

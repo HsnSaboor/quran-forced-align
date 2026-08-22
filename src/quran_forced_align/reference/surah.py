@@ -43,7 +43,7 @@ def build_surah_reference(sura_idx, include_istiaatha=True):
     cache = _get_precomputed_cache()
     if sura_idx in cache:
         cached_refs = cache[sura_idx]
-        if not include_istiaatha and cached_refs and getattr(cached_refs[0], "aya_idx", None) == 0:
+        if not include_istiaatha and cached_refs and cached_refs[0].get("aya_idx") == 0:
             return cached_refs[1:]
         return cached_refs
 

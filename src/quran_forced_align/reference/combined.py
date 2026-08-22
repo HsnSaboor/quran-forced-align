@@ -1,5 +1,4 @@
 import copy
-import gzip
 import os
 import pickle
 from functools import lru_cache
@@ -9,6 +8,9 @@ from .boundary import _boundary_bridge_rules
 from .surah import build_surah_reference
 
 _REFS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "references")
+
+# Process-level in-memory cache for 0.00ms Stage 1 reference retrieval
+_COMBINED_CACHE = {}
 
 
 # Cache the expensive quran_phonetizer calls — Quran text is 100% static and
@@ -36,6 +38,9 @@ def build_combined_reference(sura_idx, tok2id, max_token_len, include_boundary_t
     If `include_istiaatha=False`, strips the Isti'adha (Aya 0) preamble so
     recordings without Isti'adha align cleanly with zero leading drift.
     """
+    cache_key = (sura_idx, bool(include_boundary_tajweed), bool(include_istiaatha))
+    if cache_key in _COMBINED_CACHE:
+        return _COMBINED_CACHE[cache_key]
     s_file = os.path.join(_REFS_DIR, f"{sura_idx}.pkl")
     res = None
     if os.path.isfile(s_file):
@@ -108,6 +113,7 @@ def build_combined_reference(sura_idx, tok2id, max_token_len, include_boundary_t
                         **w,
                         "token_positions": [p - shift for p in w["token_positions"]]
                     })
-            return clean_tokens, clean_word_slots
+            res = (clean_tokens, clean_word_slots)
 
+    _COMBINED_CACHE[cache_key] = res
     return res

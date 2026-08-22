@@ -14,17 +14,19 @@ from .constants import MIN_WORD_DUR
 
 
 def fmt_srt_time(t):
-    ms = int(round(t * 1000))
+    ms = max(0, int(round(t * 1000)))
     h, ms = divmod(ms, 3600000)
     mi, ms = divmod(ms, 60000)
     s, ms = divmod(ms, 1000)
     return f"{h:02d}:{mi:02d}:{s:02d},{ms:03d}"
 
 
-def emit_srt(records, out_path):
+def emit_srt(records, out_path, strip_istiaatha=False):
     """Write plain-text SRT captions from `build_rich_records`'s output.
     SRT format itself has no room for the confidence/letter-tier fields,
     so this only ever reads word/start/end/is_repeat."""
+    if strip_istiaatha:
+        records = [r for r in records if r.get("aya", 1) != 0]
     lines = []
     for idx, r in enumerate(records, 1):
         tag = " [repeat]" if r["is_repeat"] else ""
@@ -69,19 +71,22 @@ def _sorted_clamped_spans(cues, seconds_per_frame):
     return clamped
 
 
-def cues_to_tuples(cues, seconds_per_frame):
+def cues_to_tuples(cues, seconds_per_frame, strip_istiaatha=False):
     """Convert frame-indexed cues to (word, start, end, sura, aya, is_repeat)
     tuples, sorted by start time -- see `_sorted_clamped_spans` for the
     sort/clamp logic this delegates to. Used by the manual (non-pipeline)
     ground-truth test harness; the CLI/batch pipeline uses
     `build_rich_records` instead."""
+    spans = _sorted_clamped_spans(cues, seconds_per_frame)
+    if strip_istiaatha:
+        spans = [(c, s, e) for c, s, e in spans if c.get("aya", 1) != 0]
     return [
         (c["word"], start, end, c["sura"], c["aya"], c["is_repeat"])
-        for c, start, end in _sorted_clamped_spans(cues, seconds_per_frame)
+        for c, start, end in spans
     ]
 
 
-def build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok):
+def build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok, strip_istiaatha=False):
     """Build the full per-word output records (word/timing/repeat flag,
     confidence signals, and the letter/phoneme/tajweed tier), sorted and
     end-clamped identically to `cues_to_tuples` -- the flat fields the web
@@ -93,8 +98,11 @@ def build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok):
     token's global position back to its actual phoneme string -- see
     `cells.build_letter_tier`.
     """
+    spans = _sorted_clamped_spans(cues, seconds_per_frame)
+    if strip_istiaatha:
+        spans = [(c, s, e) for c, s, e in spans if c.get("aya", 1) != 0]
     records = []
-    for c, start, end in _sorted_clamped_spans(cues, seconds_per_frame):
+    for c, start, end in spans:
         records.append({
             "word": c["word"],
             "start": start,
@@ -126,10 +134,12 @@ def _json_safe_float(x):
     return x
 
 
-def emit_json_rich(records, out_path):
+def emit_json_rich(records, out_path, strip_istiaatha=False):
     """Write `build_rich_records`'s output as strict, standards-compliant
     JSON (see `_json_safe_float` for why a plain `json.dump` isn't enough).
-    Uses high-speed SIMD `orjson` when available for instant serialization."""
+    Uses high-speed SIMD `orjson` (or `ujson`) when available for instant serialization."""
+    if strip_istiaatha:
+        records = [r for r in records if r.get("aya", 1) != 0]
     safe_records = [
         {**r, "avg_logprob": _json_safe_float(r["avg_logprob"]),
          "min_decision_margin": _json_safe_float(r["min_decision_margin"])}
@@ -139,7 +149,12 @@ def emit_json_rich(records, out_path):
         import orjson
         with open(out_path, "wb") as f:
             f.write(orjson.dumps(safe_records, option=orjson.OPT_INDENT_2))
-    except Exception:
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(safe_records, f, ensure_ascii=False, indent=2)
+    except ImportError:
+        try:
+            import ujson
+            with open(out_path, "w", encoding="utf-8") as f:
+                ujson.dump(safe_records, f, ensure_ascii=False, indent=2)
+        except ImportError:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(safe_records, f, ensure_ascii=False, indent=2)
     print(f"wrote {out_path} ({len(records)} word entries, rich)")

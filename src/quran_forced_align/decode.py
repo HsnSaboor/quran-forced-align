@@ -19,23 +19,56 @@ import numpy as np
 
 _fast_ops = None
 
+
+def _compile_fast_ops_jit(c_path: Path, so_path: Path) -> bool:
+    """Attempt on-the-fly compilation of _fast_ops.c if a C compiler is present."""
+    import shutil
+    import subprocess
+    compiler = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    if not compiler or not c_path.exists():
+        return False
+    try:
+        cmd = [compiler, "-O3", "-fPIC", "-shared", "-o", str(so_path), str(c_path), "-lm"]
+        res = subprocess.run(cmd, capture_output=True, timeout=15)
+        return res.returncode == 0 and so_path.exists()
+    except Exception:
+        return False
+
+
 def get_fast_ops():
-    """Return the loaded _fast_ops CDLL instance, attempting reload if necessary."""
+    """Return the loaded _fast_ops CDLL instance, attempting reload/JIT if necessary."""
     global _fast_ops
     if _fast_ops is not None and hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
         return _fast_ops
-    for fname in ("_fast_ops_v2.so", "_fast_ops.so"):
-        try:
-            so_path = Path(__file__).parent / fname
-            if so_path.exists():
+
+    pkg_dir = Path(__file__).parent
+    candidate_paths = (
+        list(pkg_dir.glob("_fast_ops*.so"))
+        + list(pkg_dir.glob("_fast_ops*.pyd"))
+        + list(pkg_dir.glob("_fast_ops*.dylib"))
+        + [pkg_dir / "_fast_ops_v2.so", pkg_dir / "_fast_ops.so"]
+    )
+
+    for so_path in candidate_paths:
+        if so_path.exists():
+            try:
                 lib = ctypes.CDLL(str(so_path))
                 if hasattr(lib, "fast_detect_and_fix_repeats_engine"):
                     _fast_ops = lib
                     break
-                elif _fast_ops is None:
+                elif _fast_ops is None and hasattr(lib, "fast_token_id_levenshtein_ratio"):
                     _fast_ops = lib
-        except Exception:
-            pass
+            except Exception:
+                pass
+
+    if _fast_ops is None or not hasattr(_fast_ops, "fast_detect_and_fix_repeats_engine"):
+        c_src = pkg_dir / "_fast_ops.c"
+        target_so = pkg_dir / "_fast_ops.so"
+        if _compile_fast_ops_jit(c_src, target_so):
+            try:
+                _fast_ops = ctypes.CDLL(str(target_so))
+            except Exception:
+                pass
     if _fast_ops is not None:
         try:
             _fast_ops.fast_token_id_levenshtein_ratio.argtypes = [

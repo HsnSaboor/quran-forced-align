@@ -82,6 +82,9 @@ def make_onnx_session(model_path, providers=("CPUExecutionProvider",), provider_
                     "trt_max_workspace_size": str(2 * 1024 * 1024 * 1024),  # 2 GB
                     "trt_timing_cache_enable": True,
                     "trt_builder_optimization_level": "3",
+                    "trt_profile_min_shapes": "x:1x61x80,processed_lens:1",
+                    "trt_profile_opt_shapes": "x:8x61x80,processed_lens:8",
+                    "trt_profile_max_shapes": "x:32x61x80,processed_lens:32",
                 }
                 opts.append(trt_opts)
             elif p_name == "CUDAExecutionProvider":

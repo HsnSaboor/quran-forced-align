@@ -28,6 +28,19 @@ from .pipeline import align_surah
 from .srt import emit_json_rich, emit_srt
 
 
+def parse_istiaatha_choice(val: str | bool) -> str | bool:
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in ("auto", "default", "none"):
+        return "auto"
+    if s in ("yes", "true", "1", "y"):
+        return True
+    if s in ("no", "false", "0", "n"):
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid --include-istiaatha choice: '{val}'. Use auto, yes, or no.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="quran-forced-align",
@@ -44,10 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Path to tokens.txt. If omitted, automatically resolves or downloads from Hugging Face.")
     ap.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto",
                     help="Execution device: 'auto' (default: CUDA if available, else CPU), 'cuda', or 'cpu'.")
+    ap.add_argument("--trt", action="store_true", default=False,
+                    help="Enable TensorRT execution provider for FP16 acceleration on NVIDIA GPUs.")
     ap.add_argument("--intra-surah-split", action="store_true", default=None,
                     help="Enable parallel intra-surah GPU streaming. Enabled automatically on CUDA by default.")
-    ap.add_argument("--include-istiaatha", action=argparse.BooleanOptionalAction, default=True,
-                    help="Include Isti'adha ('أَعُوذُ بِٱللَّهِ مِنَ ٱلشَّيْطَـٰنِ ٱلرَّجِيمِ') preamble in reference. Use --no-include-istiaatha if recitation audio begins directly with Surah/Basmala.")
+    ap.add_argument("--include-istiaatha", type=parse_istiaatha_choice, default="auto",
+                    help="Include Isti'adha preamble in reference ('auto', 'yes', or 'no'). Default: 'auto'.")
     add_tuning_args(ap)
     return ap
 

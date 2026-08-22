@@ -130,6 +130,8 @@ def _boundary_bridge_rules(prev_word, next_word):
     def _diff(joint_span, isolated_span):
         diffs = []
         for char_idx, (joint_char, isolated_char) in enumerate(zip(joint_span, isolated_span)):
+            if joint_char["tajweed_rules"] == isolated_char["tajweed_rules"]:
+                continue
             joint_rules = set(joint_char["tajweed_rules"])
             isolated_rules = set(isolated_char["tajweed_rules"])
             if joint_rules != isolated_rules:

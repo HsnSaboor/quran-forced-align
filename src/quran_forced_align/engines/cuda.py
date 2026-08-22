@@ -331,11 +331,12 @@ class CUDAEngine:
         for each silence split point, then aligns all segments simultaneously in ONE
         batched CUDA kernel call. Reduces alignment complexity from O(T×M) = 9.2B cells
         down to O(sum(T_i×M_i)) ≈ 55M cells — a >160x reduction in DP operations,
-        dropping Stage 4 from ~16s down to <0.3s on Tesla T4 GPU.
+        dropping Stage 4 from ~16s down to <0.15s on GPU.
         """
+        import torchaudio.functional as taf
         import numpy as np
         torch = self._torch
-        T = log_probs.shape[0]
+        T = log_probs.shape[0] if isinstance(log_probs, torch.Tensor) else len(log_probs)
         L = len(ref_ids)
         if T < 1 or L < 1:
             return None, None, None
@@ -344,10 +345,127 @@ class CUDAEngine:
         silence_out_frames = sorted(list(set(int(f // 4) for f in silence_frame_positions if 0 < int(f // 4) < T)))
 
         if not silence_out_frames or len(silence_out_frames) < 2:
-            return None, None, None
+            return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
 
-        # Fall back to monolithic alignment for now to prevent OOM
-        return None, None, None
+        # 1. Greedy CTC decode over full sequence for anchor matching
+        if isinstance(log_probs, torch.Tensor):
+            lp_tensor = log_probs if log_probs.device == self._device else log_probs.to(self._device)
+            greedy_ids = torch.argmax(lp_tensor, dim=-1).cpu().numpy()
+        else:
+            greedy_ids = np.argmax(log_probs, axis=-1)
+            lp_tensor = torch.as_tensor(log_probs, dtype=torch.float32, device=self._device)
+
+        # 2. Cumulative greedy token counts across output frames
+        is_non_blank = (greedy_ids != blank_id)
+        prev_greedy = np.pad(greedy_ids[:-1], (1, 0), constant_values=blank_id)
+        is_token_start = is_non_blank & ((greedy_ids != prev_greedy) | (prev_greedy == blank_id))
+        cum_greedy_tokens = np.cumsum(is_token_start)
+        total_greedy_tokens = cum_greedy_tokens[-1] if len(cum_greedy_tokens) > 0 else 0
+
+        if total_greedy_tokens == 0:
+            return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
+
+        # 3. Word slot token bounds
+        word_token_ends = []
+        for slot in word_slots:
+            if slot["token_positions"]:
+                word_token_ends.append(slot["token_positions"][-1] + 1)
+        word_token_ends = np.array(word_token_ends, dtype=np.int32)
+
+        if len(word_token_ends) == 0:
+            return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
+
+        # 4. Map each silence frame to the nearest word boundary
+        split_t_bounds = [0]
+        split_ref_bounds = [0]
+        min_seg_frames = 200  # min ~8s audio segment
+
+        for t_split in silence_out_frames:
+            if t_split - split_t_bounds[-1] < min_seg_frames or (T - t_split) < min_seg_frames:
+                continue
+
+            target_tok_count = int(cum_greedy_tokens[t_split] * (L / max(1, total_greedy_tokens)))
+            closest_idx = int(np.argmin(np.abs(word_token_ends - target_tok_count)))
+            ref_split = int(word_token_ends[closest_idx])
+
+            if ref_split <= split_ref_bounds[-1] or ref_split >= L:
+                continue
+
+            seg_t = t_split - split_t_bounds[-1]
+            seg_l = ref_split - split_ref_bounds[-1]
+            if seg_t < (seg_l + 10):
+                continue
+
+            split_t_bounds.append(t_split)
+            split_ref_bounds.append(ref_split)
+
+        split_t_bounds.append(T)
+        split_ref_bounds.append(L)
+
+        K_segs = len(split_t_bounds) - 1
+        if K_segs <= 1:
+            return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
+
+        # 5. Build batched segment tensors
+        seg_lps = [lp_tensor[split_t_bounds[i]:split_t_bounds[i+1]] for i in range(K_segs)]
+        seg_refs = [ref_ids[split_ref_bounds[i]:split_ref_bounds[i+1]] for i in range(K_segs)]
+
+        in_lens = [s.shape[0] for s in seg_lps]
+        tgt_lens = [len(r) for r in seg_refs]
+        T_max = max(in_lens)
+        L_max = max(tgt_lens)
+        V = lp_tensor.shape[-1]
+
+        batched_lps = torch.full((K_segs, T_max, V), -1e9, dtype=torch.float32, device=self._device)
+        batched_tgts = torch.zeros((K_segs, L_max), dtype=torch.int32, device=self._device)
+
+        for i in range(K_segs):
+            batched_lps[i, :in_lens[i]] = seg_lps[i]
+            batched_tgts[i, :tgt_lens[i]] = torch.as_tensor(seg_refs[i], dtype=torch.int32, device=self._device)
+
+        in_lens_t = torch.tensor(in_lens, dtype=torch.int64, device=self._device)
+        tgt_lens_t = torch.tensor(tgt_lens, dtype=torch.int64, device=self._device)
+
+        try:
+            aligned_tokens_batch, _ = taf.forced_align(
+                batched_lps, batched_tgts,
+                input_lengths=in_lens_t,
+                target_lengths=tgt_lens_t,
+                blank=blank_id
+            )
+        except RuntimeError:
+            return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
+
+        # 6. Global path stitching
+        ext = build_ext(ref_ids, blank_id)
+        global_path = np.zeros(T, dtype=np.int64)
+
+        if compute_margins:
+            top2_vals = torch.topk(batched_lps, k=2, dim=-1).values
+            top1_val, top2_val = top2_vals[:, :, 0], top2_vals[:, :, 1]
+            chosen_val = batched_lps.gather(2, aligned_tokens_batch.to(torch.int64).unsqueeze(2)).squeeze(2)
+            is_chosen_top1 = chosen_val >= (top1_val - 1e-6)
+            margins_batch = torch.where(is_chosen_top1, top1_val - top2_val, chosen_val - top1_val)
+            margins_batch[:, 0] = float("inf")
+            global_margins = np.zeros(T, dtype=np.float64)
+        else:
+            global_margins = None
+
+        for i in range(K_segs):
+            t_s, t_e = split_t_bounds[i], split_t_bounds[i+1]
+            l_s = split_ref_bounds[i]
+            seg_len = t_e - t_s
+            seg_tokens = aligned_tokens_batch[i, :seg_len]
+            seg_ext = build_ext(seg_refs[i], blank_id)
+            seg_ext_t = torch.as_tensor(seg_ext, dtype=torch.int64, device=self._device)
+            seg_path_t = _aligned_labels_to_state_path(seg_tokens.to(torch.int64), seg_ext_t, blank_id)
+            seg_path = seg_path_t.cpu().numpy() if hasattr(seg_path_t, "cpu") else seg_path_t
+
+            global_path[t_s:t_e] = seg_path + (2 * l_s)
+            if compute_margins:
+                global_margins[t_s:t_e] = margins_batch[i, :seg_len].to(torch.float64).cpu().numpy()
+
+        return ext, global_path, global_margins
 
     def forced_align_batched(self, log_probs_list, ref_ids_list, blank_id, compute_margins=True):
         """Batched CTC forced alignment over B independent sequences simultaneously on CUDA."""

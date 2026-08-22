@@ -1,6 +1,8 @@
 """tokens.txt -> char-sequence tokenizer (longest-match / max-munge)."""
+from functools import lru_cache
 
 
+@lru_cache(maxsize=16)
 def load_tokens(tokens_path):
     """Parse tokens.txt into (tok2id, id2tok, blank_id, max_token_len).
 

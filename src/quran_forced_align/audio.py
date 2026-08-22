@@ -301,30 +301,18 @@ def load_audio_as_wav16k(path: str, threads: int = 0, use_cache: bool = True) ->
             _save_pcm_cache(path, wav_samples)
         return wav_samples
 
-    # 3. High-throughput parallel multi-chunk decoder for long recordings (>30s)
+    # 3. Soundfile + GPU/polyphase resampler for short recordings (<30s)
     dur = _get_audio_duration_fast(path)
-    if dur is not None and dur > 30.0:
-        workers = min(12, max(6, (os.cpu_count() or 4) * 2))
-        par_samples = _parallel_chunk_ffmpeg_decode(path, dur, num_workers=workers)
-        if use_cache:
-            _save_pcm_cache(path, par_samples)
-        return par_samples
+    if dur is not None and dur <= 30.0:
+        sf_samples = _try_load_soundfile_fast(path)
+        if sf_samples is not None:
+            if use_cache:
+                _save_pcm_cache(path, sf_samples)
+            return sf_samples
 
-    # 4. Soundfile + GPU/polyphase resampler for short recordings (<30s)
-    sf_samples = _try_load_soundfile_fast(path)
-    if sf_samples is not None:
-        if use_cache:
-            _save_pcm_cache(path, sf_samples)
-        return sf_samples
-
-    # 5. C-level streaming decoding (torchaudio / StreamReader)
-    ta_samples = _try_load_torchaudio_stream(path)
-    if ta_samples is not None:
-        if use_cache:
-            _save_pcm_cache(path, ta_samples)
-        return ta_samples
-
-    # 6. Universal high-throughput single ffmpeg pipe fallback
+    # 4. Universal high-throughput single-pass FFmpeg f32le stream decoder
+    # Direct float32le pipe avoids int16->float32 cast and eliminates all lossy -ss seek artifacts
+    threads = threads or min(8, max(4, os.cpu_count() or 4))
     cmd = [
         "ffmpeg",
         "-nostdin",
@@ -335,20 +323,20 @@ def load_audio_as_wav16k(path: str, threads: int = 0, use_cache: bool = True) ->
         "-i", str(path),
         "-ar", str(SAMPLE_RATE),
         "-ac", "1",
-        "-f", "s16le",
+        "-f", "f32le",
         "pipe:1",
     ]
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        bufsize=2 * 1024 * 1024,
+        bufsize=4 * 1024 * 1024,
     )
     stdout, stderr = proc.communicate()
     if proc.returncode != 0:
         err = stderr.decode("utf-8", errors="replace")
         raise RuntimeError(f"ffmpeg audio decode failed for {path}: {err}")
-    samples = np.frombuffer(stdout, dtype=np.int16).astype(np.float32) * (1.0 / 32768.0)
+    samples = np.frombuffer(stdout, dtype=np.float32)
     if use_cache:
         _save_pcm_cache(path, samples)
     return samples

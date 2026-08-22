@@ -333,52 +333,68 @@ def run_pipelined_batch(
                     )
                     log_probs = log_probs_copy
 
-                records = _align_from_log_probs(
-                    engine,
-                    log_probs,
-                    seconds_per_frame,
-                    it.combined_token_ids,
-                    blank_id,
-                    it.word_slots,
-                    id2tok,
-                    anomaly_low_ratio,
-                    anomaly_high_ratio,
-                    ayah_final_high_ratio_mult,
-                    repeat_confidence_margin,
-                    max_repeat_window_words,
-                    null_log,
-                )
+                try:
+                    if str(include_istiaatha).lower() in ("auto", "none"):
+                        from .pipeline import detect_leading_istiaatha
+                        has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
+                        comb_ids, w_slots = build_combined_reference(s, tok2id, max_token_len, include_istiaatha=has_istiaatha)
+                        strip_aya0 = True
+                    else:
+                        comb_ids = it.combined_token_ids
+                        w_slots = it.word_slots
+                        strip_aya0 = False
 
-                out_path = os.path.join(out_dir, f"{s:03d}.srt")
-                emit_srt(records, out_path)
-                json_out = os.path.splitext(out_path)[0] + ".json"
-                emit_json_rich(records, json_out)
+                    records = _align_from_log_probs(
+                        engine,
+                        log_probs,
+                        seconds_per_frame,
+                        comb_ids,
+                        blank_id,
+                        w_slots,
+                        id2tok,
+                        anomaly_low_ratio,
+                        anomaly_high_ratio,
+                        ayah_final_high_ratio_mult,
+                        repeat_confidence_margin,
+                        max_repeat_window_words,
+                        null_log,
+                        strip_istiaatha=strip_aya0,
+                    )
 
-                n_repeats = sum(1 for r in records if r.get("is_repeat"))
-                n_words = len(records)
-                audio_dur = it.audio_duration_sec
-                total_audio_sec += audio_dur
-                total_words += n_words
-                total_repeats += n_repeats
+                    out_path = os.path.join(out_dir, f"{s:03d}.srt")
+                    emit_srt(records, out_path)
+                    json_out = os.path.splitext(out_path)[0] + ".json"
+                    emit_json_rich(records, json_out)
 
-                per_surah_wall = batch_elapsed / len(valid_items)
-                rtf = per_surah_wall / max(audio_dur, 0.001)
+                    n_repeats = sum(1 for r in records if r.get("is_repeat"))
+                    n_words = len(records)
+                    audio_dur = it.audio_duration_sec
+                    total_audio_sec += audio_dur
+                    total_words += n_words
+                    total_repeats += n_repeats
 
-                res = {
-                    "surah": s,
-                    "n_words": n_words,
-                    "n_repeats": n_repeats,
-                    "audio_duration_sec": audio_dur,
-                    "wall_clock_sec": per_surah_wall,
-                    "rtf": rtf,
-                    "status": "ok",
-                    "srt_path": out_path,
-                    "json_path": json_out,
-                    "opus_path": it.opus_path,
-                }
-                results[s] = res
-                if progress_callback is not None:
-                    progress_callback(res)
+                    per_surah_wall = batch_elapsed / len(valid_items)
+                    rtf = per_surah_wall / max(audio_dur, 0.001)
+
+                    res = {
+                        "surah": s,
+                        "n_words": n_words,
+                        "n_repeats": n_repeats,
+                        "audio_duration_sec": audio_dur,
+                        "wall_clock_sec": per_surah_wall,
+                        "rtf": rtf,
+                        "status": "ok",
+                        "srt_path": out_path,
+                        "json_path": json_out,
+                        "opus_path": it.opus_path,
+                    }
+                    results[s] = res
+                    if progress_callback is not None:
+                        progress_callback(res)
+                except Exception as e_surah:
+                    errors[s] = e_surah
+                    if verbose:
+                        print(f"[surah {s:03d}] ALIGNMENT/EXPORT FAILED: {type(e_surah).__name__}: {e_surah}")
 
             if verbose:
                 b_words = sum(results[s]["n_words"] for s in valid_surahs if s in results)
@@ -500,28 +516,18 @@ def _align_batch_of_surahs(surahs: list[int], audio_dir: str, out_dir: str, mode
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .cli import parse_istiaatha_choice
     ap = argparse.ArgumentParser(
-        description="Overlapped Asynchronous Forced Alignment Batch Execution for Quran Surahs"
+        prog="quran-forced-align-batch",
+        description="High-throughput asynchronous forced-alignment batch pipeline for Quran surahs",
     )
-    ap.add_argument(
-        "--surahs",
-        required=True,
-        help='surah numbers to process: a range ("1-114", "67-71") or a comma list ("67,68,69")',
-    )
-    ap.add_argument(
-        "--audio-dir",
-        required=True,
-        help='directory containing audio files (e.g. "{surah:03d}.mp3", ".opus", ".wav")',
-    )
-    ap.add_argument(
-        "--out-dir",
-        required=True,
-        help="output directory for generated word-level SRT and JSON files",
-    )
+    ap.add_argument("--surahs", required=True, help="surah numbers to process (e.g. '1-114' or '67,68,69')")
+    ap.add_argument("--audio-dir", required=True, help="directory containing input audio files")
+    ap.add_argument("--out-dir", required=True, help="directory where output SRT/JSON files will be written")
     ap.add_argument(
         "--opus-dir",
         default=None,
-        help="optional output directory to save loudnorm-normalized and compressed Opus audio files",
+        help="optional directory for saving normalized Opus audio",
     )
     ap.add_argument(
         "--transcode-opus",
@@ -530,25 +536,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--model",
-        default="model/zipformer_p_arabic_v3.int8.onnx",
-        help="path to Zipformer CTC ONNX model (default: model/zipformer_p_arabic_v3.int8.onnx)",
+        default=None,
+        help="path to Zipformer CTC ONNX model (auto-resolved from HF/cache if omitted)",
     )
     ap.add_argument(
         "--tokens",
-        default="model/tokens.txt",
-        help="path to tokens.txt vocabulary file",
+        default=None,
+        help="path to tokens.txt vocabulary file (auto-resolved from HF/cache if omitted)",
     )
     ap.add_argument(
         "--device",
         choices=["cpu", "cuda"],
         default="cpu",
-        help="forced-alignment execution engine ('cpu' or 'cuda')",
+        help="forced-alignment execution engine: 'cpu' (default) or 'cuda'",
     )
     ap.add_argument(
-        "--cuda-batch-size",
+        "--batch-size", "--cuda-batch-size",
+        dest="cuda_batch_size",
         type=int,
         default=1,
         help="--device cuda ONLY: surahs per batched acoustic-model inference pass (recommended: 8 on Colab T4)",
+    )
+    ap.add_argument(
+        "--trt",
+        action="store_true",
+        default=False,
+        help="enable TensorRT execution provider for FP16 acceleration on NVIDIA GPUs",
     )
     ap.add_argument(
         "--intra-surah-split",
@@ -575,9 +588,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--include-istiaatha",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="include Isti'adha preamble in reference; use --no-include-istiaatha if audio starts with Surah/Basmala directly",
+        type=parse_istiaatha_choice,
+        default="auto",
+        help="include Isti'adha preamble in reference: 'auto' (default), 'yes', or 'no'",
+    )
+    ap.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        default=False,
+        help="suppress per-batch progress logs",
     )
     add_tuning_args(ap)
     return ap
@@ -639,9 +658,14 @@ def print_summary_report(summary: dict, surah_list: list[int]) -> None:
 
 
 def main():
+    from .model_manager import resolve_device, resolve_model, resolve_tokens
     args = build_parser().parse_args()
     surah_list = parse_surah_list(args.surahs)
     _validate_device_flags(args)
+
+    device = resolve_device(args.device)
+    model_path = resolve_model(args.model, device=device)
+    tokens_path = resolve_tokens(args.tokens)
 
     os.makedirs(args.out_dir, exist_ok=True)
     if args.opus_dir:
@@ -651,9 +675,9 @@ def main():
         surah_list,
         args.audio_dir,
         args.out_dir,
-        model_path=args.model,
-        tokens_path=args.tokens,
-        device=args.device,
+        model_path=model_path,
+        tokens_path=tokens_path,
+        device=device,
         cuda_batch_size=args.cuda_batch_size,
         intra_surah_split=args.intra_surah_split,
         opus_dir=args.opus_dir,

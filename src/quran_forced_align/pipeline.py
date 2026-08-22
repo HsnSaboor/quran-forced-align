@@ -139,6 +139,9 @@ from .constants import (
     DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     DEFAULT_TAIL_SILENCE_SEC,
     FBANK_FRAME_SHIFT_SAMPLES,
+    ISTIAATHA_DETECT_CONFIDENCE_THRESHOLD,
+    ISTIAATHA_DETECT_MAX_FRAMES,
+    ISTIAATHA_MIN_DETECT_FRAMES,
     MIN_WORD_DUR,
     SAMPLE_RATE,
 )
@@ -197,17 +200,48 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
     return tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples
 
 
+def detect_leading_istiaatha(log_probs, id2tok, blank_id=0, max_frames=ISTIAATHA_DETECT_MAX_FRAMES) -> bool:
+    """Inspect the first ~8-10 seconds of acoustic log_probs to detect if
+    the reciter recited Isti'adha (Audhubillah).
+    Takes 0.01ms because log_probs is already computed.
+    """
+    import numpy as np
+    T = min(len(log_probs), max_frames)
+    if T < ISTIAATHA_MIN_DETECT_FRAMES:
+        return False
+
+    if hasattr(log_probs, "argmax"):
+        if hasattr(log_probs, "is_cuda") and log_probs.is_cuda:
+            argmax_ids = log_probs[:T].argmax(dim=-1).cpu().numpy()
+        else:
+            argmax_ids = np.argmax(log_probs[:T], axis=-1)
+    else:
+        argmax_ids = np.argmax(log_probs[:T], axis=-1)
+
+    tokens = []
+    prev = None
+    for tid in argmax_ids:
+        tid = int(tid)
+        if tid != blank_id and tid != prev:
+            tok = id2tok.get(tid, "")
+            if tok:
+                tokens.append(tok)
+        prev = tid
+    decoded = "".join(tokens)
+
+    # Phonetic signatures of Isti'adha ('أعوذ', 'بالله', 'من', 'الشيطان', 'الرجيم')
+    signatures = ("ءَعُ", "عُۥۥذُ", "عُذُ", "ششَي", "طَاانِ", "طَانِ", "جِۦۦم", "جِيم")
+    return any(sig in decoded for sig in signatures)
+
+
 def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_ids, blank_id,
                            word_slots, id2tok, anomaly_low_ratio, anomaly_high_ratio,
                            ayah_final_high_ratio_mult, repeat_confidence_margin,
-                           max_repeat_window_words, log, silence_feature_frames=None):
+                           max_repeat_window_words, log, silence_feature_frames=None,
+                           strip_istiaatha=False):
     """Steps [4/6]-[6/6] of `align_surah`: forced-alignment, repeat
     detection, and confidence scoring, given an ALREADY-COMPUTED
-    `log_probs` matrix -- factored out so `align_surahs_batched` can run
-    this same per-surah post-processing for every surah's own
-    `log_probs` slice after the one batched inference call, without
-    duplicating this logic. Identical to what `align_surah` itself runs
-    for the single-surah, unbatched case.
+    `log_probs` matrix.
     """
     t4_start = time.perf_counter()
     log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
@@ -255,7 +289,7 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     total = t4_elapsed + t5_elapsed + t6_elapsed
     log(f"      Stages 4-6 total: {total:.3f}s (align: {t4_elapsed:.3f}s, repeats: {t5_elapsed:.3f}s, confidence: {t6_elapsed:.3f}s)")
 
-    return build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok)
+    return build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok, strip_istiaatha=strip_istiaatha)
 
 
 def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
@@ -345,11 +379,21 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     lp_shape = log_probs.shape if hasattr(log_probs, 'shape') else f"tensor({log_probs.size()})"
     log(f"      log_probs shape {lp_shape}, {seconds_per_frame * 1000:.1f}ms/output-frame [{t3_elapsed:.3f}s, {audio_sec/max(0.001,t3_elapsed):.0f}x realtime]")
 
+    # Resolve include_istiaatha == 'auto' via 0.01ms acoustic check on log_probs
+    if str(include_istiaatha).lower() in ("auto", "none"):
+        has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
+        log(f"      [Auto-Isti'adha] Acoustic probe: {'Detected' if has_istiaatha else 'Not present'}")
+        combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=has_istiaatha)
+        strip_aya0 = True
+    else:
+        strip_aya0 = False
+
     records = _align_from_log_probs(
         engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
         anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
         repeat_confidence_margin, max_repeat_window_words, log,
-        silence_feature_frames=silence_feature_frames
+        silence_feature_frames=silence_feature_frames,
+        strip_istiaatha=strip_aya0,
     )
     t_e2e = time.perf_counter() - t_e2e_start
     log(f"      ════════════════════════════════════════════════════════════")
@@ -490,12 +534,20 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
             )
             
         silence_feature_frames = silence_frames_list[idx] if silence_frames_list else None
-        
+
+        if str(include_istiaatha).lower() in ("auto", "none"):
+            has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
+            combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=has_istiaatha)
+            strip_aya0 = True
+        else:
+            strip_aya0 = False
+
         records = _align_from_log_probs(
             engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
             anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
             repeat_confidence_margin, max_repeat_window_words, log,
-            silence_feature_frames=silence_feature_frames
+            silence_feature_frames=silence_feature_frames,
+            strip_istiaatha=strip_aya0,
         )
         results.append(records)
     return results

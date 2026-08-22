@@ -131,3 +131,8 @@ FREE_DECODE_MIN_MARGIN = -0.25  # (ratio_doubled - ratio_single) must clear this
 DEFAULT_INTRA_SURAH_MAX_SPLITS = 60  # L1-Cache Optimal Sweet Spot (K=60 concurrency on Tesla T4/A100)
 DEFAULT_INTRA_SURAH_MIN_GAP_FRAMES = 100
 DEFAULT_INTRA_SURAH_MIN_SEG_FRAMES = 500
+
+# Auto-Isti'adha acoustic detection window & similarity thresholds
+ISTIAATHA_DETECT_MAX_FRAMES = 250   # First ~10.0s of audio frames (at 0.04s output frame shift)
+ISTIAATHA_MIN_DETECT_FRAMES = 30    # Minimum audio frames required to attempt auto-detection
+ISTIAATHA_DETECT_CONFIDENCE_THRESHOLD = 0.40  # Levenshtein token similarity threshold
