@@ -35,7 +35,7 @@ def log_msg(msg, f_out=None):
         f_out.write(formatted + "\n")
         f_out.flush()
 
-def run_profiler():
+def run_profiler(audio_path_override: str = None):
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     f_log = open(LOG_FILE, "w", encoding="utf-8")
     
@@ -49,13 +49,15 @@ def run_profiler():
     
     # 1. Download / Load Audio
     candidate_paths = [
+        audio_path_override,
+        "/content/abdel-mohsen-al-obeikan_002.mp3",
         "/content/verification_output/abdel-mohsen-al-obeikan_002.mp3",
         "/content/test_surah2.mp3",
         "/tmp/test_surah2.mp3"
     ]
     audio_path = None
     for p in candidate_paths:
-        if os.path.exists(p):
+        if p and os.path.exists(p):
             audio_path = p
             break
             
