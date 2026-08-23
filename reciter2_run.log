@@ -1,0 +1,210 @@
+nohup: ignoring input
+bash: line 31: warning: here-document at line 1 delimited by end-of-file (wanted `EOF')
+=== Starting Full Production Run: Reciter 2 (abdel-mohsen-al-obeikan) ===
+[1;31m2026-08-22 18:02:03.172535767 [E:onnxruntime:Default, provider_bridge_ort.cc:1848 TryGetProviderInfo_TensorRT] /onnxruntime_src/onnxruntime/core/session/provider_bridge_ort.cc:1539 onnxruntime::Provider& onnxruntime::ProviderLibrary::Get() [ONNXRuntimeError] : 1 : FAIL : Failed to load library libonnxruntime_providers_tensorrt.so with error: libnvinfer.so.10: cannot open shared object file: No such file or directory
+[m
+[0;93m2026-08-22 18:02:03.849747011 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/out_norm/Exp'[m
+[0;93m2026-08-22 18:02:03.851170530 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm/Exp'[m
+[0;93m2026-08-22 18:02:03.853924699 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_2/Exp'[m
+[0;93m2026-08-22 18:02:03.855170287 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_3/Exp'[m
+[0;93m2026-08-22 18:02:03.857179161 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_4/Exp'[m
+[0;93m2026-08-22 18:02:03.858469963 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_5/Exp'[m
+[0;93m2026-08-22 18:02:03.859918713 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_6/Exp'[m
+[0;93m2026-08-22 18:02:03.861822534 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_7/Exp'[m
+[0;93m2026-08-22 18:02:03.863250614 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_8/Exp'[m
+[0;93m2026-08-22 18:02:03.864575723 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_9/Exp'[m
+[0;93m2026-08-22 18:02:03.866138495 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_10/Exp'[m
+[0;93m2026-08-22 18:02:03.867770423 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_11/Exp'[m
+[0;93m2026-08-22 18:02:03.869116028 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_12/Exp'[m
+[0;93m2026-08-22 18:02:03.870676059 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_13/Exp'[m
+[0;93m2026-08-22 18:02:03.872455221 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_14/Exp'[m
+[0;93m2026-08-22 18:02:03.874967845 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_15/Exp'[m
+[0;93m2026-08-22 18:02:04.067718296 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/out_norm/Exp'[m
+[0;93m2026-08-22 18:02:04.067848523 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm/Exp'[m
+[0;93m2026-08-22 18:02:04.067965416 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_2/Exp'[m
+[0;93m2026-08-22 18:02:04.068031126 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_3/Exp'[m
+[0;93m2026-08-22 18:02:04.068102176 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_4/Exp'[m
+[0;93m2026-08-22 18:02:04.068162945 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_5/Exp'[m
+[0;93m2026-08-22 18:02:04.068225438 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_6/Exp'[m
+[0;93m2026-08-22 18:02:04.068296643 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_7/Exp'[m
+[0;93m2026-08-22 18:02:04.068359504 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_8/Exp'[m
+[0;93m2026-08-22 18:02:04.068423156 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_9/Exp'[m
+[0;93m2026-08-22 18:02:04.068488228 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_10/Exp'[m
+[0;93m2026-08-22 18:02:04.068565001 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_11/Exp'[m
+[0;93m2026-08-22 18:02:04.068630488 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_12/Exp'[m
+[0;93m2026-08-22 18:02:04.068692729 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_13/Exp'[m
+[0;93m2026-08-22 18:02:04.068784127 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_14/Exp'[m
+[0;93m2026-08-22 18:02:04.068894330 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_15/Exp'[m
+[0;93m2026-08-22 18:02:04.104449501 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/out_norm/Exp'[m
+[0;93m2026-08-22 18:02:04.104559813 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm/Exp'[m
+[0;93m2026-08-22 18:02:04.104659046 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_2/Exp'[m
+[0;93m2026-08-22 18:02:04.104703811 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_3/Exp'[m
+[0;93m2026-08-22 18:02:04.104788810 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_4/Exp'[m
+[0;93m2026-08-22 18:02:04.104852275 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_5/Exp'[m
+[0;93m2026-08-22 18:02:04.104917142 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_6/Exp'[m
+[0;93m2026-08-22 18:02:04.104992168 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_7/Exp'[m
+[0;93m2026-08-22 18:02:04.105067573 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_8/Exp'[m
+[0;93m2026-08-22 18:02:04.105133727 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_9/Exp'[m
+[0;93m2026-08-22 18:02:04.105201265 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_10/Exp'[m
+[0;93m2026-08-22 18:02:04.105353527 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_11/Exp'[m
+[0;93m2026-08-22 18:02:04.105424482 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_12/Exp'[m
+[0;93m2026-08-22 18:02:04.105493201 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_13/Exp'[m
+[0;93m2026-08-22 18:02:04.105568197 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_14/Exp'[m
+[0;93m2026-08-22 18:02:04.105671577 [W:onnxruntime:, constant_folding.cc:268 ApplyImpl] Could not find a CPU kernel and hence can't constant fold Exp node '/norm_15/Exp'[m
+
+[1m[96m================================================================================[0m
+[1m[96m  QURAN FORCED ALIGNMENT — END-TO-END COLAB PIPELINE RUNNER[0m
+[1m[96m================================================================================[0m
+
+• Runtime Environment : Google Colab
+• Active Device        : CUDA (Tesla T4)
+• CUDA Provider Linked : True
+• Google Drive Storage : /content/drive/MyDrive/QuranAligned
+• Local Scratch NVMe   : /content/quran_scratch
+[92m✓ Model ready:[0m /content/quran_scratch/models/zipformer_p_arabic_v3.1.fp16.onnx (126.3 MB)
+
+[1mExecution Plan:[0m
+• Reciters Selected   : 1 / 225
+• Surahs per Reciter  : 114 surahs (1 to 114)
+• Batch Size (CUDA)   : 8
+• Skip Existing Runs  : True
+• Transcode Opus/EBU  : True (EBU R128 loudnorm enabled)
+--------------------------------------------------------------------------------
+
+
+[1m[1/1] Reciter: abdel-mohsen-al-obeikan (abdel-mohsen-al-obeikan) [Idx: 1][0m
+  [96m⚡ Resuming: 1 surahs exist, 113 remaining to align.[0m
+  [1/3] Downloading 113 surahs to local scratch NVMe (/content/quran_scratch/audio/abdel-mohsen-al-obeikan)...
+        [92m✓ 113/113 audio files downloaded (27.1s).[0m
+  [2/3] Running Pipelined GPU Alignment & Loudnorm Transcoding...
+[pipeline] Initializing CUDA engine (/content/quran_scratch/models/zipformer_p_arabic_v3.1.fp16.onnx)...
+*************** EP Error ***************
+EP Error /onnxruntime_src/onnxruntime/python/onnxruntime_pybind_state.cc:507 void onnxruntime::python::RegisterTensorRTPluginsAsCustomOps(PySessionOptions&, const onnxruntime::ProviderOptions&) Please install TensorRT libraries as mentioned in the GPU requirements page, make sure they're in the PATH or LD_LIBRARY_PATH, and that your GPU is supported.
+ when using ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+Falling back to ['CUDAExecutionProvider', 'CPUExecutionProvider'] and retrying.
+****************************************
+      [GPU Zipformer2-CTC] Chunk     1/279 (  0.4%) | Elapsed:   0.0s | Speed: 29280.0x realtime
+      [GPU Zipformer2-CTC] Chunk   201/279 ( 72.0%) | Elapsed:  13.1s | Speed: 448.8x realtime
+      [GPU Zipformer2-CTC] Chunk   279/279 (100.0%) | Elapsed:  17.8s | Speed: 459.5x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/002.srt (6170 word cues, 48 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/002.json (6170 word entries, rich)
+[batch [2]] 1 surahs (6170 words, 5035.9s audio) aligned in 18.26s (RTF 0.0036x, 275.8x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/180 (  0.6%) | Elapsed:   0.0s | Speed: 29280.0x realtime
+      [GPU Zipformer2-CTC] Chunk   180/180 (100.0%) | Elapsed:  11.1s | Speed: 476.2x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/003.srt (3541 word cues, 55 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/003.json (3541 word entries, rich)
+[batch [3]] 1 surahs (3541 words, 3023.8s audio) aligned in 11.43s (RTF 0.0038x, 264.6x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/184 (  0.5%) | Elapsed:   0.0s | Speed: 29280.0x realtime
+      [GPU Zipformer2-CTC] Chunk   184/184 (100.0%) | Elapsed:  12.0s | Speed: 448.4x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/004.srt (3799 word cues, 47 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/004.json (3799 word entries, rich)
+[batch [4]] 1 surahs (3799 words, 3185.9s audio) aligned in 12.38s (RTF 0.0039x, 257.4x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/136 (  0.7%) | Elapsed:   0.0s | Speed: 24000.0x realtime
+      [GPU Zipformer2-CTC] Chunk   136/136 (100.0%) | Elapsed:   6.9s | Speed: 471.9x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/005.srt (2835 word cues, 26 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/005.json (2835 word entries, rich)
+[batch [5]] 1 surahs (2835 words, 2268.9s audio) aligned in 7.12s (RTF 0.0031x, 318.9x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/114 (  0.9%) | Elapsed:   0.0s | Speed: 26880.0x realtime
+      [GPU Zipformer2-CTC] Chunk   114/114 (100.0%) | Elapsed:   6.2s | Speed: 490.5x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/006.srt (3099 word cues, 44 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/006.json (3099 word entries, rich)
+[batch [6]] 1 surahs (3099 words, 2501.6s audio) aligned in 6.46s (RTF 0.0026x, 387.2x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/179 (  0.6%) | Elapsed:   0.0s | Speed: 29280.0x realtime
+      [GPU Zipformer2-CTC] Chunk   179/179 (100.0%) | Elapsed:   9.8s | Speed: 535.1x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/007.srt (3349 word cues, 24 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/007.json (3349 word entries, rich)
+[batch [7]] 1 surahs (3349 words, 2926.6s audio) aligned in 10.21s (RTF 0.0035x, 286.7x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/122 (  0.8%) | Elapsed:   0.0s | Speed: 11520.0x realtime
+      [GPU Zipformer2-CTC] Chunk   122/122 (100.0%) | Elapsed:   8.0s | Speed: 176.4x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/008.srt (1251 word cues, 12 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/008.json (1251 word entries, rich)
+[batch [8]] 1 surahs (1251 words, 1083.0s audio) aligned in 8.10s (RTF 0.0075x, 133.8x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/137 (  0.7%) | Elapsed:   0.0s | Speed: 23520.0x realtime
+      [GPU Zipformer2-CTC] Chunk   137/137 (100.0%) | Elapsed:   7.8s | Speed: 415.1x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/009.srt (2547 word cues, 44 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/009.json (2547 word entries, rich)
+[batch [9]] 1 surahs (2547 words, 2220.3s audio) aligned in 7.96s (RTF 0.0036x, 278.9x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/118 (  0.8%) | Elapsed:   0.0s | Speed: 16800.0x realtime
+      [GPU Zipformer2-CTC] Chunk   118/118 (100.0%) | Elapsed:   5.9s | Speed: 335.2x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/010.srt (1858 word cues, 20 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/010.json (1858 word entries, rich)
+[batch [10]] 1 surahs (1858 words, 1586.4s audio) aligned in 6.05s (RTF 0.0038x, 262.4x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/122 (  0.8%) | Elapsed:   0.0s | Speed: 17760.0x realtime
+      [GPU Zipformer2-CTC] Chunk   122/122 (100.0%) | Elapsed:   8.0s | Speed: 272.0x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/011.srt (1948 word cues, 26 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/011.json (1948 word entries, rich)
+[batch [11]] 1 surahs (1948 words, 1658.9s audio) aligned in 8.15s (RTF 0.0049x, 203.6x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/139 (  0.7%) | Elapsed:   0.0s | Speed: 16320.0x realtime
+      [GPU Zipformer2-CTC] Chunk   139/139 (100.0%) | Elapsed:   8.8s | Speed: 257.3x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/012.srt (1797 word cues, 15 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/012.json (1797 word entries, rich)
+[batch [12]] 1 surahs (1797 words, 1544.9s audio) aligned in 8.95s (RTF 0.0058x, 172.6x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/117 (  0.9%) | Elapsed:   0.0s | Speed: 7680.0x realtime
+      [GPU Zipformer2-CTC] Chunk   117/117 (100.0%) | Elapsed:   8.0s | Speed: 111.7x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/013.srt (869 word cues, 10 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/013.json (869 word entries, rich)
+[batch [13]] 1 surahs (869 words, 706.7s audio) aligned in 8.13s (RTF 0.0115x, 86.9x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/132 (  0.8%) | Elapsed:   0.0s | Speed: 8160.0x realtime
+      [GPU Zipformer2-CTC] Chunk   132/132 (100.0%) | Elapsed:   8.2s | Speed: 131.5x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/014.srt (850 word cues, 15 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/014.json (850 word entries, rich)
+[batch [14]] 1 surahs (850 words, 782.2s audio) aligned in 8.28s (RTF 0.0106x, 94.5x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/108 (  0.9%) | Elapsed:   0.0s | Speed: 6240.0x realtime
+      [GPU Zipformer2-CTC] Chunk   108/108 (100.0%) | Elapsed:   7.5s | Speed:  90.4x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/015.srt (666 word cues, 6 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/015.json (666 word entries, rich)
+[batch [15]] 1 surahs (666 words, 591.0s audio) aligned in 7.58s (RTF 0.0128x, 78.0x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/131 (  0.8%) | Elapsed:   0.0s | Speed: 15840.0x realtime
+      [GPU Zipformer2-CTC] Chunk   131/131 (100.0%) | Elapsed:   9.3s | Speed: 222.9x realtime
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/016.srt (1870 word cues, 21 flagged as repeats)
+wrote /content/drive/MyDrive/QuranAligned/json/abdel-mohsen-al-obeikan/016.json (1870 word entries, rich)
+[batch [16]] 1 surahs (1870 words, 1499.7s audio) aligned in 9.46s (RTF 0.0063x, 158.6x realtime)
+      [GPU Zipformer2-CTC] Chunk     1/118 (  0.8%) | Elapsed:   0.0s | Speed: 14880.0x realtime
+      [GPU Zipformer2-CTC] Chunk   118/118 (100.0%) | Elapsed:   7.8s | Speed: 224.1x realtime
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /home/saboor/.local/share/uv/tools/google-colab-cli/lib/python3.13/site-pack │
+│ ages/colab_cli/commands/execution.py:216 in exec_command                     │
+│                                                                              │
+│   213 │   │   │   )                                                          │
+│   214 │   │   │   state.store.add(s)                                         │
+│   215 │   │   │                                                              │
+│ ❱ 216 │   │   │   outputs = runtime.execute_code(                            │
+│   217 │   │   │   │   code,                                                  │
+│   218 │   │   │   │   output_hook=lambda o: display_output(o, output_image), │
+│   219 │   │   │   │   timeout=timeout,                                       │
+│                                                                              │
+│ /home/saboor/.local/share/uv/tools/google-colab-cli/lib/python3.13/site-pack │
+│ ages/colab_cli/runtime.py:221 in execute_code                                │
+│                                                                              │
+│   218 │   │   │   │   │   │   if idx < len(outputs):                         │
+│   219 │   │   │   │   │   │   │   output_hook(outputs[idx])                  │
+│   220 │   │   │                                                              │
+│ ❱ 221 │   │   │   reply = self.kernel_client.execute_interactive(            │
+│   222 │   │   │   │   code, output_hook=wrapped_output_hook, **kwargs        │
+│   223 │   │   │   )                                                          │
+│   224 │   │   │   # execute_interactive returns the raw reply message        │
+│                                                                              │
+│ /home/saboor/.local/share/uv/tools/google-colab-cli/lib/python3.13/site-pack │
+│ ages/jupyter_kernel_client/client.py:364 in execute_interactive              │
+│                                                                              │
+│   361 │   │   │   The reply message for this request                         │
+│   362 │   │   """                                                            │
+│   363 │   │   self._set_variables(variables)                                 │
+│ ❱ 364 │   │   return self._manager.client.execute_interactive(               │
+│   365 │   │   │   code,                                                      │
+│   366 │   │   │   silent=silent,                                             │
+│   367 │   │   │   store_history=store_history,                               │
+│                                                                              │
+│ /home/saboor/.local/share/uv/tools/google-colab-cli/lib/python3.13/site-pack │
+│ ages/jupyter_kernel_client/wsclient.py:1097 in execute_interactive           │
+│                                                                              │
+│   1094 │   │   │   │   │   self.iopub_channel.msg_ready()                    │
+│   1095 │   │   │   │   │   or (allow_stdin and                               │
+│        self.stdin_channel.msg_ready())                                       │
+│   1096 │   │   │   │   ):                                                    │
+│ ❱ 1097 │   │   │   │   │   raise TimeoutError("Timeout waiting for output")  │
+│   1098 │   │   │   │                                                         │
+│   1099 │   │   │   │   if allow_stdin:                                       │
+│   1100 │   │   │   │   │   try:                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+TimeoutError: Timeout waiting for output

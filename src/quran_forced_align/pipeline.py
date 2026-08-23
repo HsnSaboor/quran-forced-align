@@ -293,7 +293,7 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
 
 
 def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
-                 device: str = "cpu", intra_surah_split: bool = False,
+                 device: str = "cpu", intra_surah_split: bool | None = None,
                  include_istiaatha: bool = True,
                  anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
                  anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
@@ -345,6 +345,9 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
 
     t_e2e_start = time.perf_counter()
 
+    if intra_surah_split is None:
+        intra_surah_split = (device == "cuda")
+
     # --- Overlap model initialization with audio decode ---
     # Engine construction (ONNX session creation, GPU warm-up) takes several
     # seconds. Audio decode (Stage 2) takes ~30s on CPU. By running them
@@ -383,6 +386,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     if str(include_istiaatha).lower() in ("auto", "none"):
         has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
         log(f"      [Auto-Isti'adha] Acoustic probe: {'Detected' if has_istiaatha else 'Not present'}")
+        max_token_len = max(len(tok) for tok in tok2id)
         combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=has_istiaatha)
         strip_aya0 = True
     else:
