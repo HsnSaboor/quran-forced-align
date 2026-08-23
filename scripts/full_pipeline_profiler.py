@@ -48,10 +48,20 @@ def run_profiler():
     log_msg(f"Environment: Colab={env['is_colab']}, GPU={env['gpu_name']} ({env['cuda_version']}), ORT_GPU={env['ort_gpu_ok']}", f_log)
     
     # 1. Download / Load Audio
-    test_url = "https://media.assabile.com/assabile/recitations_7892537823/mp3/abdel-mohsen-al-obeikan/abdalmhsn-al-bykan-002-al-baqara-234-2232.mp3"
-    audio_path = "/content/test_surah2.mp3"
-    
-    if not os.path.exists(audio_path):
+    candidate_paths = [
+        "/content/verification_output/abdel-mohsen-al-obeikan_002.mp3",
+        "/content/test_surah2.mp3",
+        "/tmp/test_surah2.mp3"
+    ]
+    audio_path = None
+    for p in candidate_paths:
+        if os.path.exists(p):
+            audio_path = p
+            break
+            
+    if audio_path is None:
+        audio_path = "/content/test_surah2.mp3"
+        test_url = "https://media.assabile.com/assabile/recitations_7892537823/mp3/abdel-mohsen-al-obeikan/abdalmhsn-al-bykan-002-al-baqara-234-2232.mp3"
         log_msg(f"[Stage 0/6] Downloading raw recitation audio from {test_url} ...", f_log)
         t_dl0 = time.perf_counter()
         req = urllib.request.Request(test_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -61,7 +71,7 @@ def run_profiler():
         fsize_mb = os.path.getsize(audio_path) / (1024 * 1024)
         log_msg(f"  Downloaded {fsize_mb:.1f} MB in {t_dl:.3f}s ({fsize_mb/max(0.001, t_dl):.2f} MB/s)", f_log)
     else:
-        log_msg(f"[Stage 0/6] Audio already cached at {audio_path} ({os.path.getsize(audio_path)/(1024*1024):.1f} MB)", f_log)
+        log_msg(f"[Stage 0/6] Using cached audio at {audio_path} ({os.path.getsize(audio_path)/(1024*1024):.1f} MB)", f_log)
         
     # Model and tokens resolution
     model_path = resolve_model(device="cuda", prefer_fp16=True)
