@@ -161,7 +161,7 @@ def run_profiler(audio_path_override: str = None):
     output_opus_path = "/content/output_surah2.opus"
     output_json_path = "/content/output_surah2.json"
     
-    transcode_to_opus(audio_path, output_opus_path, loudnorm=True, bitrate="96k")
+    transcode_to_opus(audio_path, output_opus_path, loudnorm=False, bitrate="96k")
     with open(output_json_path, "w", encoding="utf-8") as f_json:
         json.dump(records, f_json, ensure_ascii=False, indent=2)
         
