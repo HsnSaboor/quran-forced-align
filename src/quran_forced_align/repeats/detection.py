@@ -549,6 +549,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                         restart_frame_start = gap_frames[best_g_start]
                 
                 # If greedy tokens were sparse in pause gap, test acoustic alignment of preceding suffix phrases (longest first)
+                from ..decode import fast_ctc_align_c
                 if not best_match and aya_words:
                     for w_s in range(max(0, len(aya_words) - 5), len(aya_words)):
                         phrase_cands = aya_words[w_s:]
@@ -558,7 +559,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                         if not phrase_tok_ids:
                             continue
                         lp_gap = log_probs_np[gap_start:gap_end + 1]
-                        ext_gap, path_gap, _ = ctc_forced_align(lp_gap, phrase_tok_ids, blank_id)
+                        ext_gap, path_gap, _ = fast_ctc_align_c(lp_gap, phrase_tok_ids, blank_id)
                         if path_gap is not None:
                             alp = avg_logprob_along_path(lp_gap, ext_gap, path_gap, 0, len(path_gap) - 1)
                             if alp >= -1.35: # Acoustic confidence threshold for repeated speech in pause
@@ -577,7 +578,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                         if 0 < len(prev_toks) <= 2:
                             test_tok_ids = prev_toks + list(match_tok_ids)
                             lp_gap_test = log_probs_np[gap_start:gap_end + 1]
-                            ext_t, path_t, _ = ctc_forced_align(lp_gap_test, test_tok_ids, blank_id)
+                            ext_t, path_t, _ = fast_ctc_align_c(lp_gap_test, test_tok_ids, blank_id)
                             if path_t is not None:
                                 first_st, _ = frame_spans_from_path(path_t, len(ext_t))
                                 if first_st[1] >= 0:
@@ -587,7 +588,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                     n_m = len(match_tok_ids)
                     
                     lp_gap = log_probs_np[restart_frame_start:gap_end + 1]
-                    ext_gap, path_gap, _ = ctc_forced_align(lp_gap, match_tok_ids, blank_id)
+                    ext_gap, path_gap, _ = fast_ctc_align_c(lp_gap, match_tok_ids, blank_id)
                     if path_gap is not None:
                         first_s, last_s = frame_spans_from_path(path_gap, len(ext_gap))
                         visited_tokens = sum(1 for s in range(n_m) if first_s[2 * s + 1] >= 0)

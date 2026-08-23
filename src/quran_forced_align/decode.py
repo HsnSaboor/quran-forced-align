@@ -113,13 +113,43 @@ def get_fast_ops():
 _fast_ops = get_fast_ops()
 
 
-def _collapse_ctc_ids(ids, blank_id):
+def fast_ctc_align_c(log_probs_np, ref_ids, blank_id):
+    """Fast native C CTC forced alignment wrapper."""
+    from .trellis import build_ext
+    from .viterbi import ctc_forced_align
+    ops = get_fast_ops()
+    if ops is None or not hasattr(ops, "fast_ctc_forced_align"):
+        return ctc_forced_align(log_probs_np, ref_ids, blank_id)
+
+    T, V = log_probs_np.shape
+    L = len(ref_ids)
+    if T < L or T <= 0 or L <= 0:
+        return None, None, None
+
+    log_probs_c = np.ascontiguousarray(log_probs_np, dtype=np.float32)
+    ref_ids_c = np.ascontiguousarray(ref_ids, dtype=np.int32)
+    out_path = np.zeros(T, dtype=np.int32)
+
+    ret = ops.fast_ctc_forced_align(
+        log_probs_c.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        T, V,
+        ref_ids_c.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+        L, blank_id,
+        out_path.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
+    )
+    if ret != 0:
+        return None, None, None
+    ext = build_ext(ref_ids, blank_id)
+    return ext, out_path.astype(np.int64), None
+
+
+def _collapse_ctc_ids(greedy_ids, blank_id):
     """Collapse an already-argmaxed per-frame token-id sequence `ids` to the
     greedy-CTC output list (consecutive duplicate labels collapsed, blanks
     dropped)."""
-    if hasattr(ids, "size") and ids.size == 0:
+    if hasattr(greedy_ids, "size") and greedy_ids.size == 0:
         return []
-    if len(ids) == 0:
+    if len(greedy_ids) == 0:
         return []
     
     # Fast vectorized numpy
