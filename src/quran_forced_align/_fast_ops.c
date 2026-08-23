@@ -301,7 +301,8 @@ int fast_detect_and_fix_repeats_engine(
             
             int free_decode_pass = (ratio_doubled >= free_decode_min_ratio_doubled && 
                                    (ratio_doubled - ratio_single) >= free_decode_min_margin);
-            
+            if (!free_decode_pass) continue;
+
             int align_res = fast_ctc_forced_align(log_probs + window_start * V, window_len, V, doubled_ids, L_doubled, blank_id, path2);
             if (align_res != 0) continue;
             

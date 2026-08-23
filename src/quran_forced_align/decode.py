@@ -143,13 +143,13 @@ def fast_ctc_align_c(log_probs_np, ref_ids, blank_id):
     return ext, out_path.astype(np.int64), None
 
 
-def _collapse_ctc_ids(greedy_ids, blank_id):
+def _collapse_ctc_ids(ids, blank_id):
     """Collapse an already-argmaxed per-frame token-id sequence `ids` to the
     greedy-CTC output list (consecutive duplicate labels collapsed, blanks
     dropped)."""
-    if hasattr(greedy_ids, "size") and greedy_ids.size == 0:
+    if hasattr(ids, "size") and ids.size == 0:
         return []
-    if len(greedy_ids) == 0:
+    if len(ids) == 0:
         return []
     
     # Fast vectorized numpy
