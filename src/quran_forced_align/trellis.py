@@ -62,10 +62,11 @@ def avg_logprob_along_path(log_probs, ext, path, start_frame, end_frame):
     Returns -inf for an empty/invalid span (end_frame < start_frame) so
     comparisons against it always fail closed (treated as "no confidence").
     """
-    if path is None or len(path) == 0:
+    if path is None or len(path) == 0 or log_probs is None or len(log_probs) == 0:
         return -np.inf
     start_frame = max(0, start_frame)
-    end_frame = min(len(path) - 1, end_frame)
+    max_f = min(len(path) - 1, len(log_probs) - 1)
+    end_frame = min(max_f, end_frame)
     if end_frame < start_frame:
         return -np.inf
     if not isinstance(log_probs, np.ndarray) and hasattr(log_probs, "is_cuda"):
