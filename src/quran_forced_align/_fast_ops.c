@@ -250,6 +250,8 @@ int fast_detect_and_fix_repeats_engine(
         int k_max = words_left_in_aya;
         if (max_repeat_window_words > 0 && k_max > max_repeat_window_words) {
             k_max = max_repeat_window_words;
+        } else if (max_repeat_window_words <= 0 && k_max > 10) {
+            k_max = 10;
         }
 
         int window_end = (i < num_cues - 1) ? (cue_starts[i + 1] - 1) : (T - 1);
