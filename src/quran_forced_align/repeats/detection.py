@@ -518,33 +518,33 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                         gap_frames.append(gap_start + t_idx)
                     prev_g = gid
                     
-                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-15:]
+                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-10:]
                 best_match = None
                 best_score = 0.0
                 best_g_start = 0
                 restart_frame_start = gap_start
                 
-                if len(gap_toks) >= 4:
-                    for g_s in range(len(gap_toks)):
-                        trailing = gap_toks[g_s:]
-                        for w_s in range(len(aya_words)):
-                            for w_e in range(w_s, min(len(aya_words), w_s + 10)):
-                                phrase_cands = aya_words[w_s:w_e + 1]
-                                phrase_tok_ids = []
-                                for c in phrase_cands:
-                                    phrase_tok_ids.extend([combined_token_ids[pos] for pos in c.get("token_positions", [])])
-                                if not phrase_tok_ids:
-                                    continue
-                                min_p = min(4, len(phrase_tok_ids))
-                                for prefix_len in range(min_p, len(phrase_tok_ids) + 1):
-                                    target = phrase_tok_ids[:prefix_len]
-                                    for g_len in range(min_p, min(len(trailing) + 1, len(target) + 3)):
-                                        r = token_id_levenshtein_ratio(trailing[:g_len], target)
-                                        score = r + 0.15 * prefix_len
-                                        if r >= 0.75 and score > best_score:
-                                            best_score = score
-                                            best_match = (phrase_cands, phrase_tok_ids[:prefix_len])
-                                            best_g_start = g_s
+                if len(gap_toks) >= 3 and aya_words:
+                    # Test suffix phrases from longest to shortest
+                    for w_s in range(max(0, len(aya_words) - 5), len(aya_words)):
+                        phrase_cands = aya_words[w_s:]
+                        phrase_tok_ids = []
+                        for c in phrase_cands:
+                            phrase_tok_ids.extend([combined_token_ids[pos] for pos in c.get("token_positions", [])])
+                        if not phrase_tok_ids:
+                            continue
+                        n_p = len(phrase_tok_ids)
+                        # Match against trailing gap tokens
+                        for g_s in range(max(0, len(gap_toks) - n_p - 4), len(gap_toks)):
+                            trailing = gap_toks[g_s:]
+                            g_len = min(len(trailing), n_p + 2)
+                            if g_len >= min(3, n_p):
+                                r = token_id_levenshtein_ratio(trailing[:g_len], phrase_tok_ids)
+                                score = r + 0.10 * n_p
+                                if r >= 0.70 and score > best_score:
+                                    best_score = score
+                                    best_match = (phrase_cands, phrase_tok_ids)
+                                    best_g_start = g_s
                     if best_match:
                         restart_frame_start = gap_frames[best_g_start]
                 
