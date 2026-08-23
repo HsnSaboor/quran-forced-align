@@ -34,28 +34,35 @@ def token_frame_spans(token_positions, first_seen, last_seen):
 
 
 def extract_word_frame_spans(word_slots, first_seen, last_seen):
-    """For each word slot with at least one token, compute (start_frame,
-    end_frame) as the min/max over its tokens' extended-trellis label-state
-    spans, plus the per-token spans themselves (`token_frame_spans`) --
-    needed for the phoneme/letter-tier output (see `cells.py`), which
-    would otherwise require re-deriving this from `first_seen`/`last_seen`
-    a second time."""
-    cues = []  # list of dicts: word, sura, aya, start_frame, end_frame, is_repeat, token_ids_global_pos
+    """Vectorized high-performance extraction of per-word frame spans from first_seen and last_seen arrays."""
+    cues = []
     for slot in word_slots:
-        positions = slot["token_positions"]
+        positions = slot.get("token_positions")
         if not positions:
             continue
-        spans = token_frame_spans(positions, first_seen, last_seen)
-        if spans is None:
+        
+        p0 = positions[0]
+        p_last = positions[-1]
+        s0 = 2 * p0 + 1
+        s_last = 2 * p_last + 1
+        
+        w_start = int(first_seen[s0])
+        w_end = int(last_seen[s_last])
+        if w_start < 0 or w_end < 0:
             continue
-        per_token_spans, word_start, word_end = spans
+            
+        per_token_spans = [
+            (int(first_seen[2 * p + 1]), int(last_seen[2 * p + 1]))
+            for p in positions
+        ]
+        
         cues.append({
             "word": slot["word"],
             "sura": slot["sura"],
             "aya": slot["aya"],
             "is_ayah_final": slot["is_ayah_final"],
-            "start_frame": word_start,
-            "end_frame": word_end,
+            "start_frame": w_start,
+            "end_frame": w_end,
             "is_repeat": False,
             "token_positions": positions,
             "token_char_idx": slot["token_char_idx"],
