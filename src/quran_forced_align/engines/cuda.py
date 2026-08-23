@@ -401,6 +401,9 @@ class CUDAEngine:
             if seg_t < (seg_l + 10):
                 continue
 
+            split_t_bounds.append(t_split)
+            split_ref_bounds.append(ref_split)
+
         while len(split_t_bounds) > 1 and (T - split_t_bounds[-1]) < (L - split_ref_bounds[-1] + 10):
             split_t_bounds.pop()
             split_ref_bounds.pop()
@@ -412,44 +415,79 @@ class CUDAEngine:
         if K_segs <= 1:
             return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
 
-        # 5. Global path stitching & segment alignment
-        ext = build_ext(ref_ids, blank_id)
-        global_path = np.zeros(T, dtype=np.int64)
-        global_margins = np.zeros(T, dtype=np.float64) if compute_margins else None
+        # 5. Batched segment alignment on GPU
+        seg_lps = [lp_tensor[split_t_bounds[i]:split_t_bounds[i+1]] for i in range(K_segs)]
+        seg_refs = [ref_ids[split_ref_bounds[i]:split_ref_bounds[i+1]] for i in range(K_segs)]
+
+        in_lens = [s.shape[0] for s in seg_lps]
+        tgt_lens = [len(r) for r in seg_refs]
+        T_max = max(in_lens)
+        L_max = max(tgt_lens)
+        V = lp_tensor.shape[-1]
+
+        batched_lps = torch.full((K_segs, T_max, V), -1e9, dtype=torch.float32, device=self._device)
+        batched_tgts = torch.zeros((K_segs, L_max), dtype=torch.int32, device=self._device)
 
         for i in range(K_segs):
-            t_s, t_e = split_t_bounds[i], split_t_bounds[i+1]
-            l_s, l_e = split_ref_bounds[i], split_ref_bounds[i+1]
-            seg_ref_slice = ref_ids[l_s:l_e]
-            seg_ext = build_ext(seg_ref_slice, blank_id)
-            sub_lp = lp_tensor[t_s:t_e].unsqueeze(0)  # 1 x T_seg x V
-            sub_ref = torch.as_tensor(seg_ref_slice, dtype=torch.int32, device=self._device).unsqueeze(0)
+            batched_lps[i, :in_lens[i]] = seg_lps[i]
+            batched_tgts[i, :tgt_lens[i]] = torch.as_tensor(seg_refs[i], dtype=torch.int32, device=self._device)
 
-            try:
-                sub_aligned, _ = taf.forced_align(sub_lp, sub_ref, blank=blank_id)
-                seg_tokens = sub_aligned[0]
+        in_lens_t = torch.tensor(in_lens, dtype=torch.int64, device=self._device)
+        tgt_lens_t = torch.tensor(tgt_lens, dtype=torch.int64, device=self._device)
+
+        try:
+            aligned_tokens_batch, _ = taf.forced_align(
+                batched_lps, batched_tgts,
+                input_lengths=in_lens_t,
+                target_lengths=tgt_lens_t,
+                blank=blank_id
+            )
+            # Global path stitching
+            ext = build_ext(ref_ids, blank_id)
+            global_path = np.zeros(T, dtype=np.int64)
+
+            if compute_margins:
+                top2_vals = torch.topk(batched_lps, k=2, dim=-1).values
+                top1_val, top2_val = top2_vals[:, :, 0], top2_vals[:, :, 1]
+                chosen_val = batched_lps.gather(2, aligned_tokens_batch.to(torch.int64).unsqueeze(2)).squeeze(2)
+                is_chosen_top1 = chosen_val >= (top1_val - 1e-6)
+                margins_batch = torch.where(is_chosen_top1, top1_val - top2_val, chosen_val - top1_val)
+                margins_batch[:, 0] = float("inf")
+                global_margins = np.zeros(T, dtype=np.float64)
+            else:
+                global_margins = None
+
+            for i in range(K_segs):
+                t_s, t_e = split_t_bounds[i], split_t_bounds[i+1]
+                l_s = split_ref_bounds[i]
+                seg_len = t_e - t_s
+                seg_tokens = aligned_tokens_batch[i, :seg_len]
+                seg_ext = build_ext(seg_refs[i], blank_id)
                 seg_ext_t = torch.as_tensor(seg_ext, dtype=torch.int64, device=self._device)
                 seg_path_t = _aligned_labels_to_state_path(seg_tokens.to(torch.int64), seg_ext_t, blank_id)
                 seg_path = seg_path_t.cpu().numpy() if hasattr(seg_path_t, "cpu") else seg_path_t
-            except Exception:
+                global_path[t_s:t_e] = seg_path + (2 * l_s)
+
+                if compute_margins:
+                    global_margins[t_s:t_e] = margins_batch[i, :seg_len].to(torch.float64).cpu().numpy()
+
+            return ext, global_path, global_margins
+
+        except Exception:
+            # Per-segment fallback
+            ext = build_ext(ref_ids, blank_id)
+            global_path = np.zeros(T, dtype=np.int64)
+            global_margins = np.zeros(T, dtype=np.float64) if compute_margins else None
+            for i in range(K_segs):
+                t_s, t_e = split_t_bounds[i], split_t_bounds[i+1]
+                l_s, l_e = split_ref_bounds[i], split_ref_bounds[i+1]
+                seg_ref_slice = ref_ids[l_s:l_e]
                 sub_lp_np = lp_tensor[t_s:t_e].cpu().numpy() if isinstance(lp_tensor, torch.Tensor) else lp_tensor[t_s:t_e]
                 _, seg_path, _ = ctc_forced_align(sub_lp_np, seg_ref_slice, blank_id)
                 if seg_path is None:
                     return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
-                seg_tokens = torch.as_tensor([seg_ext[s] for s in seg_path], device=self._device)
-
-            global_path[t_s:t_e] = seg_path + (2 * l_s)
-
-            if compute_margins:
-                sub_top2 = torch.topk(sub_lp[0], k=2, dim=-1).values
-                t1, t2 = sub_top2[:, 0], sub_top2[:, 1]
-                ch_val = sub_lp[0].gather(1, seg_tokens.to(torch.int64).unsqueeze(1)).squeeze(1)
-                is_t1 = ch_val >= (t1 - 1e-6)
-                sub_m = torch.where(is_t1, t1 - t2, ch_val - t1)
-                sub_m[0] = float("inf")
-                global_margins[t_s:t_e] = sub_m.to(torch.float64).cpu().numpy()
-
-        return ext, global_path, global_margins
+                global_path[t_s:t_e] = seg_path + (2 * l_s)
+            return ext, global_path, global_margins
 
     def forced_align_batched(self, log_probs_list, ref_ids_list, blank_id, compute_margins=True):
         """Batched CTC forced alignment over B independent sequences simultaneously on CUDA."""
