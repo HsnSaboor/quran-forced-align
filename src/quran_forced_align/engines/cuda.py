@@ -417,8 +417,7 @@ class CUDAEngine:
 
         # 5. Segment alignment on GPU (batch_size=1 per torchaudio CUDA specification)
         ext = build_ext(ref_ids, blank_id)
-        global_path = np.zeros(T, dtype=np.int64)
-        global_margins = np.zeros(T, dtype=np.float64) if compute_margins else None
+        global_path_t = torch.zeros(T, dtype=torch.int64, device=self._device)
 
         for i in range(K_segs):
             t_s, t_e = split_t_bounds[i], split_t_bounds[i+1]
@@ -433,15 +432,19 @@ class CUDAEngine:
                 seg_tokens = sub_aligned[0]
                 seg_ext_t = torch.as_tensor(seg_ext, dtype=torch.int64, device=self._device)
                 seg_path_t = _aligned_labels_to_state_path(seg_tokens.to(torch.int64), seg_ext_t, blank_id)
-                seg_path = seg_path_t.cpu().numpy() if hasattr(seg_path_t, "cpu") else seg_path_t
             except Exception:
                 sub_lp_np = lp_tensor[t_s:t_e].cpu().numpy() if isinstance(lp_tensor, torch.Tensor) else lp_tensor[t_s:t_e]
-                _, seg_path, _ = ctc_forced_align(sub_lp_np, seg_ref_slice, blank_id)
-            global_path[t_s:t_e] = seg_path + (2 * l_s)
+                _, seg_path_np, _ = ctc_forced_align(sub_lp_np, seg_ref_slice, blank_id)
+                seg_path_t = torch.as_tensor(seg_path_np, dtype=torch.int64, device=self._device)
+
+            global_path_t[t_s:t_e] = seg_path_t + (2 * l_s)
+
+        global_path = global_path_t.cpu().numpy()
 
         if compute_margins:
             # Single vectorized GPU kernel for full surah margins (0.005s)
-            all_tokens = torch.as_tensor([ext[s] for s in global_path], dtype=torch.int64, device=self._device)
+            ext_t = torch.as_tensor(ext, dtype=torch.int64, device=self._device)
+            all_tokens = ext_t[global_path_t]
             top2_vals = torch.topk(lp_tensor, k=2, dim=-1).values
             t1, t2 = top2_vals[:, 0], top2_vals[:, 1]
             ch_val = lp_tensor.gather(1, all_tokens.unsqueeze(1)).squeeze(1)
