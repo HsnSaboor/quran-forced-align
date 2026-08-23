@@ -146,11 +146,27 @@ def run_profiler():
     
     # Stage 6: Vectorized Confidence Scoring & Output Records
     t0 = time.perf_counter()
-    log_msg("[Stage 6/6] Computing per-word acoustic confidence & building rich records...", f_log)
+    log_msg("[Stage 6/7] Computing per-word acoustic confidence & building rich records...", f_log)
     cues = flag_low_confidence_words(cues, log_probs, ext, path, margins)
     records = build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok, strip_istiaatha=False)
     t_stage6 = time.perf_counter() - t0
     log_msg(f"  Stage 6 complete: {len(records)} output records in {t_stage6:.4f}s", f_log)
+
+    # Stage 7: Transcode Loudnorm Opus Audio & Write JSON/SRT Artifacts
+    t0 = time.perf_counter()
+    log_msg("[Stage 7/7] Transcoding Loudnorm 96k Opus audio & saving final JSON/SRT artifacts...", f_log)
+    from quran_forced_align.audio import transcode_to_opus
+    output_opus_path = "/content/output_surah2.opus"
+    output_json_path = "/content/output_surah2.json"
+    
+    transcode_to_opus(audio_path, output_opus_path, loudnorm=True, bitrate="96k")
+    with open(output_json_path, "w", encoding="utf-8") as f_json:
+        json.dump(records, f_json, ensure_ascii=False, indent=2)
+        
+    t_stage7 = time.perf_counter() - t0
+    opus_mb = os.path.getsize(output_opus_path) / (1024 * 1024)
+    json_kb = os.path.getsize(output_json_path) / 1024
+    log_msg(f"  Stage 7 complete: Output Opus ({opus_mb:.1f} MB) and JSON ({json_kb:.1f} KB) generated in {t_stage7:.3f}s ({audio_sec/max(0.001, t_stage7):.0f}x realtime)", f_log)
     
     t_pipeline_total = time.perf_counter() - t_pipeline_start
     
@@ -164,6 +180,7 @@ def run_profiler():
     log_msg(f"  Stage 4 (GPU Segmented Align):  {t_stage4:.4f}s  ({100*t_stage4/t_pipeline_total:5.1f}%) -> {audio_sec/max(0.001, t_stage4):.1f}x Realtime", f_log)
     log_msg(f"  Stage 5 (Repeat Detection):     {t_stage5:.4f}s  ({100*t_stage5/t_pipeline_total:5.1f}%)", f_log)
     log_msg(f"  Stage 6 (Confidence Scoring):   {t_stage6:.4f}s  ({100*t_stage6/t_pipeline_total:5.1f}%)", f_log)
+    log_msg(f"  Stage 7 (Opus + JSON Output):   {t_stage7:.4f}s  ({100*t_stage7/t_pipeline_total:5.1f}%)", f_log)
     log_msg("-" * 90, f_log)
     log_msg(f"  TOTAL END-TO-END PIPELINE:      {t_pipeline_total:.4f}s", f_log)
     log_msg(f"  REALTIME THROUGHPUT MULTIPLIER: {audio_sec / max(0.001, t_pipeline_total):.1f}x REALTIME", f_log)
