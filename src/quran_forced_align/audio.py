@@ -354,6 +354,7 @@ def transcode_to_opus(
     normalization and dynamic range compression.
     """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    threads = threads or min(8, max(4, os.cpu_count() or 4))
     filters = (
         "loudnorm=I=-16:TP=-1.5:LRA=11,acompressor=threshold=-25dB:ratio=3:attack=5:release=50"
         if loudnorm else "anull"
