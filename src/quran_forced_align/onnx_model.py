@@ -37,6 +37,7 @@ def make_onnx_session(model_path, providers=("CPUExecutionProvider",), provider_
     import os as _os
 
     so = ort.SessionOptions()
+    so.log_severity_level = 3
     so.intra_op_num_threads = 1
     so.inter_op_num_threads = 1
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL

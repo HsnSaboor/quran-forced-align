@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
@@ -70,6 +70,37 @@ def _chunked(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
+def _partition_surah_batches(surah_list: list[int], max_batch_size: int = 8) -> list[list[int]]:
+    """Partition surahs into memory-safe batches based on surah length.
+    - Long surahs (1-20): processed 1-by-1 with intra-surah split parallelism (peak 850x speed, 0 OOM).
+    - Medium surahs (21-77): batched in groups of min(4, max_batch_size).
+    - Short surahs (78-114): batched in full groups of max_batch_size.
+    """
+    batches = []
+    current_batch = []
+
+    for s in surah_list:
+        if s <= 20:  # Long surah
+            if current_batch:
+                batches.append(current_batch)
+                current_batch = []
+            batches.append([s])
+        elif s <= 77:  # Medium surah
+            current_batch.append(s)
+            if len(current_batch) >= min(4, max_batch_size):
+                batches.append(current_batch)
+                current_batch = []
+        else:  # Short surah
+            current_batch.append(s)
+            if len(current_batch) >= max_batch_size:
+                batches.append(current_batch)
+                current_batch = []
+
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
 @dataclass
 class PreparedSurah:
     """Pre-processed surah ready for GPU inference and alignment."""
@@ -79,9 +110,9 @@ class PreparedSurah:
     combined_token_ids: list[int]
     word_slots: list
     feats: np.ndarray
-    samples: np.ndarray
-    silence_frames: list[int]
-    audio_duration_sec: float
+    samples: np.ndarray | None = None
+    silence_frames: list[int] = field(default_factory=list)
+    audio_duration_sec: float = 0.0
     opus_path: str | None = None
     error: Exception | None = None
 
@@ -133,6 +164,8 @@ def _prepare_single_surah_worker(
         silence_midpoints = find_silence_midpoints(samples, SAMPLE_RATE)
         silence_frames = [pos // FBANK_FRAME_SHIFT_SAMPLES for pos in silence_midpoints]
 
+    del samples
+
     # Optional Opus transcoding with loudnorm
     opus_path = None
     if transcode_opus_flag and opus_dir:
@@ -148,7 +181,7 @@ def _prepare_single_surah_worker(
         combined_token_ids=combined_token_ids,
         word_slots=word_slots,
         feats=feats,
-        samples=samples,
+        samples=None,
         silence_frames=silence_frames,
         audio_duration_sec=audio_duration_sec,
         opus_path=opus_path,
@@ -198,7 +231,7 @@ def run_pipelined_batch(
 
     t_start = time.monotonic()
     tokens_info = load_tokens(tokens_path)
-    batches = _chunked(surah_list, cuda_batch_size if device == "cuda" else 1)
+    batches = _partition_surah_batches(surah_list, cuda_batch_size if device == "cuda" else 1)
 
     batch_queue: queue.Queue[PreparedBatch | None] = queue.Queue(maxsize=max(1, prefetch_batches))
     producer_exception: list[Exception] = []
@@ -326,12 +359,15 @@ def run_pipelined_batch(
                 tok2id, id2tok, blank_id, max_token_len = it.tokens_tuple
                 
                 if hasattr(engine, "_last_log_probs_cpu"):
-                    log_probs_copy = log_probs.copy()
-                    engine._last_log_probs_cpu = log_probs_copy
-                    engine._last_log_probs_gpu = engine._torch.as_tensor(
-                        log_probs_copy, dtype=engine._torch.float32, device=engine._device
-                    )
-                    log_probs = log_probs_copy
+                    if isinstance(log_probs, np.ndarray):
+                        log_probs = log_probs.copy()
+                        engine._last_log_probs_cpu = log_probs
+                        engine._last_log_probs_gpu = engine._torch.as_tensor(
+                            log_probs, dtype=engine._torch.float32, device=engine._device
+                        )
+                    else:
+                        engine._last_log_probs_gpu = log_probs
+                        engine._last_log_probs_cpu = log_probs.cpu().numpy() if hasattr(log_probs, "cpu") else None
 
                 try:
                     if str(include_istiaatha).lower() in ("auto", "none"):

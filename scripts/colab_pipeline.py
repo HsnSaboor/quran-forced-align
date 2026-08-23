@@ -37,8 +37,16 @@ import datetime
 import glob
 import json
 import os
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+os.environ["PYTHONUNBUFFERED"] = "1"
+
 import shutil
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -354,6 +362,20 @@ async def download_surahs_async(
     return success_count
 
 
+def _safe_run_async(coro):
+    """Run an async coroutine safely whether an event loop is already running (e.g. IPython/Colab) or not."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
+
 # ============================================================================
 # Progress Display & Terminal Reporting
 # ============================================================================
@@ -536,7 +558,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         # Step 1: Parallel Download Audio to local NVMe
         print(f"  [1/3] Downloading {len(active_surahs)} surahs to local scratch NVMe ({rec_local_audio})...")
         t0_dl = time.monotonic()
-        dl_count = asyncio.run(
+        dl_count = _safe_run_async(
             download_surahs_async(
                 r_data,
                 active_surahs,
@@ -578,8 +600,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             surah_list=available_files,
             audio_dir=rec_local_audio,
             out_dir=rec_drive_json,
-            opus_dir=rec_drive_opus,
-            transcode_opus=True,
+            opus_dir=rec_drive_opus if args.transcode_opus else None,
+            transcode_opus=args.transcode_opus,
             model_path=local_model,
             tokens_path=local_tokens,
             device=resolved_device,
@@ -756,6 +778,18 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         dest="skip_existing",
         help="Re-process all surahs even if output files already exist",
+    )
+    misc_group.add_argument(
+        "--transcode-opus",
+        action="store_true",
+        default=True,
+        help="Transcode audio to 96kbps Opus with EBU R128 loudness normalization",
+    )
+    misc_group.add_argument(
+        "--no-transcode-opus",
+        action="store_false",
+        dest="transcode_opus",
+        help="Disable Opus transcoding (Pure alignment only: 225x+ realtime)",
     )
     misc_group.add_argument(
         "--clean-local-audio",

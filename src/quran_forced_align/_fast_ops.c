@@ -19,7 +19,7 @@ double fast_token_id_levenshtein_ratio(const int32_t* a, int n, const int32_t* b
     }
     
     int row_size = m + 1;
-    int32_t stack_buf[256];
+    int32_t stack_buf[256] = {0};
     int32_t* prev_row = stack_buf;
     int32_t* cur_row = stack_buf + row_size;
     int heap_alloc = 0;
@@ -232,12 +232,14 @@ int fast_detect_and_fix_repeats_engine(
     for (int i = 0; i < num_cues; ++i) {
         out_K[i] = 0;
         
+        if (consumed[i]) continue;
         if (cue_token_counts[i] == 0) continue;
-        
-        double d = cue_ends[i] - cue_starts[i];
-        double high_cutoff = high_ratio * (cue_is_ayah_final[i] ? ayah_final_high_ratio_mult : 1.0);
-        int is_anom = (d < low_ratio * median_dur || d > high_cutoff * median_dur);
-        if (!is_anom) continue;
+
+        int dur = cue_ends[i] - cue_starts[i] + 1;
+        float high_cutoff_val = high_ratio * median_dur * (cue_is_ayah_final[i] ? ayah_final_high_ratio_mult : 1.0f);
+        float low_cutoff_val = low_ratio * median_dur;
+        int is_anomalous = (dur < low_cutoff_val || dur > high_cutoff_val);
+        if (!is_anomalous) continue;
 
         int words_left_in_aya = 1;
         while (i - words_left_in_aya >= 0 && 
@@ -328,9 +330,15 @@ int fast_detect_and_fix_repeats_engine(
             int copy2_start_local = first_seen[2 * L + 1];
             int copy2_end_local = last_seen[4 * L - 1];
             
+            int copy1_dur = copy1_end_local - copy1_start_local + 1;
+            int copy2_dur = copy2_end_local - copy2_start_local + 1;
             int timing_plausible = (copy2_start_local > copy1_end_local && 
-                                   (copy1_end_local - copy1_start_local) >= min_word_dur_frames &&
-                                   (copy2_end_local - copy2_start_local) >= min_word_dur_frames);
+                                   copy1_dur >= min_word_dur_frames &&
+                                   copy2_dur >= min_word_dur_frames);
+            if (K == 1) {
+                int cue_dur = cue_ends[i] - cue_starts[i] + 1;
+                if (copy1_dur > 3 * cue_dur || copy2_dur > 3 * cue_dur) timing_plausible = 0;
+            }
             if (!timing_plausible) continue;
             
             for (int s = 0; s < L_doubled; ++s) {
@@ -350,14 +358,23 @@ int fast_detect_and_fix_repeats_engine(
             float avg2 = (float)(sum2 / (copy2_end_local - copy2_start_local + 1));
             float bilateral = avg1 < avg2 ? avg1 : avg2;
             
-            if (bilateral < confidence_floor) continue;
+            float required_floor = (K >= 3) ? (confidence_floor - 0.50f) : confidence_floor;
+            if (bilateral < required_floor) continue;
+            if (K == 1 && (copy2_start_local - copy1_end_local) > 25) continue;
             
+            // Direct acoustic verification: verify decoded tokens in copy2 match candidate phrase
+            int copy2_len = copy2_end_local - copy2_start_local + 1;
+            const int32_t* copy2_ids = full_greedy_ids + window_start + copy2_start_local;
+            int decoded_copy2_len = fast_collapse_ctc_ids(copy2_ids, copy2_len, blank_id, decoded_ids);
+            double ratio_copy2 = fast_token_id_levenshtein_ratio(decoded_ids, decoded_copy2_len, phrase_ids, L, 0.0);
+            if (ratio_copy2 < 0.40 && K < 3 && !free_decode_pass) continue;
+
             int gap_frames = copy2_start_local - copy1_end_local;
-            float margin_above_floor = bilateral - confidence_floor;
+            float margin_above_floor = bilateral - required_floor;
             if (gap_frames <= gap_artifact_max_frames && margin_above_floor < gap_artifact_min_margin) continue;
             
             // If gap is large (e.g. >15 frames = >0.6s pause), it is a distinct restart pause, not a trellis artifact
-            if (!free_decode_pass && gap_frames <= 15 && margin_above_floor < 0.3f) continue;
+            if (!free_decode_pass && K < 3 && gap_frames <= 15 && margin_above_floor < 0.3f) continue;
             
             float cand_score = bilateral + 0.25f * (K - 1);
             if (cand_score > best_score) {

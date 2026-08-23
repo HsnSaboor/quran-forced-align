@@ -13,10 +13,67 @@ from ..trellis import avg_logprob_along_path
 from .candidate import _repeat_window_candidate, build_phrase_ids
 
 
-def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id, ext, path,
-                            low_ratio, high_ratio, min_word_dur_frames,
-                            ayah_final_high_ratio_mult=1.5, confidence_margin=1.0,
-                            max_repeat_window_words=DEFAULT_MAX_REPEAT_WINDOW_WORDS):
+def detect_and_fix_repeats(
+    engine,
+    cues,
+    log_probs,
+    combined_token_ids,
+    blank_id,
+    ext,
+    path,
+    anomaly_low_ratio,
+    anomaly_high_ratio,
+    min_word_dur_frames,
+    ayah_final_high_ratio_mult=1.5,
+    confidence_margin=1.0,
+    max_repeat_window_words=None,
+    max_passes=3,
+):
+    if not cues:
+        return cues
+    
+    current_cues = cues
+    for p in range(max_passes):
+        fixed_cues = _detect_and_fix_repeats_pass(
+            engine,
+            current_cues,
+            log_probs,
+            combined_token_ids,
+            blank_id,
+            ext,
+            path,
+            anomaly_low_ratio,
+            anomaly_high_ratio,
+            min_word_dur_frames,
+            ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
+            confidence_margin=confidence_margin,
+            max_repeat_window_words=max_repeat_window_words,
+        )
+        if len(fixed_cues) == len(current_cues):
+            break
+        current_cues = fixed_cues
+        
+    # Scan inter-word pause gaps once on converged cues for abandoned/pause restarts
+    return _scan_pause_gap_restarts(current_cues, log_probs, combined_token_ids, blank_id, min_word_dur_frames)
+
+
+def _detect_and_fix_repeats_pass(
+    engine,
+    cues,
+    log_probs,
+    combined_token_ids,
+    blank_id,
+    ext,
+    path,
+    anomaly_low_ratio,
+    anomaly_high_ratio,
+    min_word_dur_frames,
+    ayah_final_high_ratio_mult=1.5,
+    confidence_margin=1.0,
+    max_repeat_window_words=DEFAULT_MAX_REPEAT_WINDOW_WORDS,
+):
+    low_ratio = anomaly_low_ratio
+    high_ratio = anomaly_high_ratio
     """Adapted from build_surah_srt.py's two-pass repeat-detection design:
     after the main alignment, scan word durations for anomalies (near-zero
     or absurdly long relative to the surah's median word duration) as the
@@ -405,4 +462,170 @@ def detect_and_fix_repeats(engine, cues, log_probs, combined_token_ids, blank_id
             fixed.append(_spliced_cue(orig, s2, e2, tok_spans2, window_start, ext2, path2, is_repeat=True))
             
     fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
+    
+    return fixed
+
+
+def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_word_dur_frames):
+    """Scan inter-word pause gaps >= 1.0s (25 frames) on converged cues for spoken restarts / repeat phrases."""
+    if len(cues) < 2:
+        return cues
+        
+    fixed = list(cues)
+    gap_repeats = []
+    
+    import numpy as np
+    from ..decode import token_id_levenshtein_ratio
+    from ..trellis import build_ext, frame_spans_from_path, avg_logprob_along_path
+    from ..viterbi import ctc_forced_align
+    from ..confidence import per_word_min_margin
+    from .spans import token_frame_spans
+    
+    log_probs_np = log_probs.cpu().numpy() if hasattr(log_probs, "cpu") else log_probs
+    full_greedy_ids = np.argmax(log_probs_np, axis=-1).astype(np.int32)
+    
+    def _shift_token_spans(token_spans, offset):
+        return [(s + offset, e + offset) for s, e in token_spans]
+        
+    def _spliced_gap_cue(orig, start_local, end_local, token_spans_local, window_start, ext2, path2, is_repeat):
+        return {
+            **orig,
+            "start_frame": start_local + window_start,
+            "end_frame": end_local + window_start,
+            "is_repeat": is_repeat,
+            "token_frame_spans": _shift_token_spans(token_spans_local, window_start),
+            "avg_logprob": avg_logprob_along_path(
+                log_probs_np[window_start:window_start + len(path2)], ext2, path2, start_local, end_local
+            ),
+            "min_decision_margin": per_word_min_margin(None, start_local, end_local),
+        }
+
+    for k in range(len(fixed) - 1):
+        c_curr = fixed[k]
+        c_next = fixed[k + 1]
+        if c_curr["aya"] == c_next["aya"] and c_curr["sura"] == c_next["sura"]:
+            gap_start = c_curr["end_frame"] + 1
+            gap_end = c_next["start_frame"] - 1
+            gap_len = gap_end - gap_start + 1
+            if gap_len >= 25: # Pause >= 1.0s
+                gap_greedy = full_greedy_ids[gap_start:gap_end + 1]
+                gap_toks = []
+                gap_frames = []
+                prev_g = blank_id
+                for t_idx, gid in enumerate(gap_greedy):
+                    if gid != blank_id and gid != prev_g:
+                        gap_toks.append(int(gid))
+                        gap_frames.append(gap_start + t_idx)
+                    prev_g = gid
+                    
+                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]]
+                best_match = None
+                best_score = 0.0
+                best_g_start = 0
+                restart_frame_start = gap_start
+                
+                if len(gap_toks) >= 4:
+                    for g_s in range(len(gap_toks)):
+                        trailing = gap_toks[g_s:]
+                        for w_s in range(len(aya_words)):
+                            for w_e in range(w_s, min(len(aya_words), w_s + 10)):
+                                phrase_cands = aya_words[w_s:w_e + 1]
+                                phrase_tok_ids = []
+                                for c in phrase_cands:
+                                    phrase_tok_ids.extend([combined_token_ids[pos] for pos in c.get("token_positions", [])])
+                                if not phrase_tok_ids:
+                                    continue
+                                min_p = min(4, len(phrase_tok_ids))
+                                for prefix_len in range(min_p, len(phrase_tok_ids) + 1):
+                                    target = phrase_tok_ids[:prefix_len]
+                                    for g_len in range(min_p, min(len(trailing) + 1, len(target) + 3)):
+                                        r = token_id_levenshtein_ratio(trailing[:g_len], target)
+                                        score = r + 0.15 * prefix_len
+                                        if r >= 0.75 and score > best_score:
+                                            best_score = score
+                                            best_match = (phrase_cands, phrase_tok_ids[:prefix_len])
+                                            best_g_start = g_s
+                    if best_match:
+                        restart_frame_start = gap_frames[best_g_start]
+                
+                # If greedy tokens were sparse in pause gap, test acoustic alignment of preceding suffix phrases (longest first)
+                if not best_match and aya_words:
+                    for w_s in range(max(0, len(aya_words) - 5), len(aya_words)):
+                        phrase_cands = aya_words[w_s:]
+                        phrase_tok_ids = []
+                        for c in phrase_cands:
+                            phrase_tok_ids.extend([combined_token_ids[pos] for pos in c.get("token_positions", [])])
+                        if not phrase_tok_ids:
+                            continue
+                        lp_gap = log_probs_np[gap_start:gap_end + 1]
+                        ext_gap, path_gap, _ = ctc_forced_align(lp_gap, phrase_tok_ids, blank_id)
+                        if path_gap is not None:
+                            alp = avg_logprob_along_path(lp_gap, ext_gap, path_gap, 0, len(path_gap) - 1)
+                            if alp >= -1.35: # Acoustic confidence threshold for repeated speech in pause
+                                best_match = (phrase_cands, phrase_tok_ids)
+                                restart_frame_start = gap_start
+                                break
+                                
+                if best_match:
+                    phrase_cands, match_tok_ids = best_match
+                    
+                    # Check if phrase_cands is preceded by a short particle/preposition in aya_words (e.g. min, fee, an, wa, etc.)
+                    start_cand_idx = aya_words.index(phrase_cands[0]) if phrase_cands[0] in aya_words else -1
+                    if start_cand_idx > 0:
+                        prev_cand = aya_words[start_cand_idx - 1]
+                        prev_toks = [combined_token_ids[pos] for pos in prev_cand.get("token_positions", [])]
+                        if 0 < len(prev_toks) <= 2:
+                            test_tok_ids = prev_toks + list(match_tok_ids)
+                            lp_gap_test = log_probs_np[gap_start:gap_end + 1]
+                            ext_t, path_t, _ = ctc_forced_align(lp_gap_test, test_tok_ids, blank_id)
+                            if path_t is not None:
+                                first_st, _ = frame_spans_from_path(path_t, len(ext_t))
+                                if first_st[1] >= 0:
+                                    phrase_cands = [prev_cand] + list(phrase_cands)
+                                    match_tok_ids = test_tok_ids
+                                    restart_frame_start = gap_start
+                    n_m = len(match_tok_ids)
+                    
+                    lp_gap = log_probs_np[restart_frame_start:gap_end + 1]
+                    ext_gap, path_gap, _ = ctc_forced_align(lp_gap, match_tok_ids, blank_id)
+                    if path_gap is not None:
+                        first_s, last_s = frame_spans_from_path(path_gap, len(ext_gap))
+                        visited_tokens = sum(1 for s in range(n_m) if first_s[2 * s + 1] >= 0)
+                        if visited_tokens >= max(2, int(0.70 * n_m)):
+                            tok_offset = 0
+                            word_raw_spans = []
+                            for cand in phrase_cands:
+                                cand_toks = [combined_token_ids[pos] for pos in cand.get("token_positions", [])]
+                                n_cand = len(cand_toks)
+                                if tok_offset < n_m:
+                                    n_part = min(n_cand, n_m - tok_offset)
+                                    sub_pos = list(range(tok_offset, tok_offset + n_part))
+                                    s_spans = token_frame_spans(sub_pos, first_s, last_s)
+                                    word_raw_spans.append((cand, s_spans[1], s_spans[2], s_spans[0], n_part, n_cand))
+                                    tok_offset += n_part
+                                else:
+                                    break
+                            
+                            if word_raw_spans:
+                                p_start = max(0, first_s[1] if first_s[1] >= 0 else 0)
+                                prev_end = p_start - 1
+                                for cand, s_loc, e_loc, tok_visited, n_part, n_cand in word_raw_spans:
+                                    cur_s = s_loc if s_loc > prev_end else prev_end + 1
+                                    cur_e = e_loc if e_loc >= cur_s + min_word_dur_frames - 1 else cur_s + min_word_dur_frames - 1
+                                    prev_end = cur_e
+                                    rep_cand = cand
+                                    if n_part < n_cand:
+                                        rep_cand = {
+                                            **cand,
+                                            "token_positions": cand["token_positions"][:n_part],
+                                            "token_char_idx": cand.get("token_char_idx", [])[:n_part] if "token_char_idx" in cand else [],
+                                        }
+                                    rep_cue = _spliced_gap_cue(
+                                        rep_cand, cur_s, cur_e, tok_visited, restart_frame_start, ext_gap, path_gap, is_repeat=True
+                                    )
+                                    gap_repeats.append(rep_cue)
+    if gap_repeats:
+        fixed.extend(gap_repeats)
+        fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
+        
     return fixed

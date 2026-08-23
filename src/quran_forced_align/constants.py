@@ -38,9 +38,9 @@ FBANK_FRAME_SHIFT_SAMPLES = int(FRAME_SHIFT_SEC * SAMPLE_RATE)
 # single edit to one used to be able to leave the other stale -- see detect_and_fix_repeats's
 # docstring for what each threshold controls).
 DEFAULT_ANOMALY_LOW_RATIO = 0.15
-DEFAULT_ANOMALY_HIGH_RATIO = 3.0
-DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT = 1.5
-DEFAULT_REPEAT_CONFIDENCE_MARGIN = 1.0
+DEFAULT_ANOMALY_HIGH_RATIO = 2.2
+DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT = 1.3
+DEFAULT_REPEAT_CONFIDENCE_MARGIN = 0.6
 DEFAULT_TAIL_SILENCE_SEC = 0.3
 
 # Optional HARD SAFETY CAP (in words) on the repeated-phrase K-search in detect_and_fix_repeats,

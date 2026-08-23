@@ -530,7 +530,11 @@
     els.jsonFileLabel.textContent = file.name;
     try {
       if (file.name.endsWith('.json') || text.trim().startsWith('[') || text.trim().startsWith('{')) {
-        const json = JSON.parse(text);
+        const sanitized = text
+          .replace(/:\s*Infinity\b/g, ': null')
+          .replace(/:\s*-Infinity\b/g, ': null')
+          .replace(/:\s*NaN\b/g, ': null');
+        const json = JSON.parse(sanitized);
         let list = [];
         if (Array.isArray(json)) {
           list = json;

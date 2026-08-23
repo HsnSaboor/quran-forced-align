@@ -110,8 +110,8 @@ def build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok, stri
             "sura": c["sura"],
             "aya": c["aya"],
             "is_repeat": c["is_repeat"],
-            "avg_logprob": c["avg_logprob"],
-            "min_decision_margin": c["min_decision_margin"],
+            "avg_logprob": _json_safe_float(c.get("avg_logprob")),
+            "min_decision_margin": _json_safe_float(c.get("min_decision_margin")),
             "low_confidence": c["low_confidence"],
             "letters": build_letter_tier(c, combined_token_ids, id2tok, seconds_per_frame),
         })
@@ -129,9 +129,15 @@ def _json_safe_float(x):
     frame 0, see viterbi.py) can legitimately be infinite, so this
     substitutes `None` (renders as JSON `null`) for either sign of
     infinity before writing, rather than emitting non-standard JSON."""
-    if isinstance(x, float) and not math.isfinite(x):
+    if x is None:
         return None
-    return x
+    try:
+        val = float(x)
+        if not math.isfinite(val):
+            return None
+        return val
+    except (TypeError, ValueError):
+        return None
 
 
 def emit_json_rich(records, out_path, strip_istiaatha=False):
@@ -141,20 +147,16 @@ def emit_json_rich(records, out_path, strip_istiaatha=False):
     if strip_istiaatha:
         records = [r for r in records if r.get("aya", 1) != 0]
     safe_records = [
-        {**r, "avg_logprob": _json_safe_float(r["avg_logprob"]),
-         "min_decision_margin": _json_safe_float(r["min_decision_margin"])}
+        {**r, "avg_logprob": _json_safe_float(r.get("avg_logprob")),
+         "min_decision_margin": _json_safe_float(r.get("min_decision_margin"))}
         for r in records
     ]
     try:
         import orjson
         with open(out_path, "wb") as f:
-            f.write(orjson.dumps(safe_records, option=orjson.OPT_INDENT_2))
-    except ImportError:
-        try:
-            import ujson
-            with open(out_path, "w", encoding="utf-8") as f:
-                ujson.dump(safe_records, f, ensure_ascii=False, indent=2)
-        except ImportError:
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(safe_records, f, ensure_ascii=False, indent=2)
+            f.write(orjson.dumps(safe_records, option=orjson.OPT_INDENT_2 | orjson.OPT_SERIALIZE_NUMPY))
+    except Exception:
+        import json
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(safe_records, f, ensure_ascii=False, indent=2)
     print(f"wrote {out_path} ({len(records)} word entries, rich)")
