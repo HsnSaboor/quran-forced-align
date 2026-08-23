@@ -518,7 +518,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                         gap_frames.append(gap_start + t_idx)
                     prev_g = gid
                     
-                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]]
+                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-15:]
                 best_match = None
                 best_score = 0.0
                 best_g_start = 0
