@@ -27,7 +27,7 @@ def detect_and_fix_repeats(
     ayah_final_high_ratio_mult=1.5,
     confidence_margin=1.0,
     max_repeat_window_words=None,
-    max_passes=3,
+    max_passes=1,
 ):
     if not cues:
         return cues
