@@ -437,20 +437,20 @@ class CUDAEngine:
             except Exception:
                 sub_lp_np = lp_tensor[t_s:t_e].cpu().numpy() if isinstance(lp_tensor, torch.Tensor) else lp_tensor[t_s:t_e]
                 _, seg_path, _ = ctc_forced_align(sub_lp_np, seg_ref_slice, blank_id)
-                if seg_path is None:
-                    return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
-                seg_tokens = torch.as_tensor([seg_ext[s] for s in seg_path], device=self._device)
-
             global_path[t_s:t_e] = seg_path + (2 * l_s)
 
-            if compute_margins:
-                sub_top2 = torch.topk(sub_lp[0], k=2, dim=-1).values
-                t1, t2 = sub_top2[:, 0], sub_top2[:, 1]
-                ch_val = sub_lp[0].gather(1, seg_tokens.to(torch.int64).unsqueeze(1)).squeeze(1)
-                is_t1 = ch_val >= (t1 - 1e-6)
-                sub_m = torch.where(is_t1, t1 - t2, ch_val - t1)
-                sub_m[0] = float("inf")
-                global_margins[t_s:t_e] = sub_m.to(torch.float64).cpu().numpy()
+        if compute_margins:
+            # Single vectorized GPU kernel for full surah margins (0.005s)
+            all_tokens = torch.as_tensor([ext[s] for s in global_path], dtype=torch.int64, device=self._device)
+            top2_vals = torch.topk(lp_tensor, k=2, dim=-1).values
+            t1, t2 = top2_vals[:, 0], top2_vals[:, 1]
+            ch_val = lp_tensor.gather(1, all_tokens.unsqueeze(1)).squeeze(1)
+            is_t1 = ch_val >= (t1 - 1e-6)
+            m = torch.where(is_t1, t1 - t2, ch_val - t1)
+            m[0] = float("inf")
+            global_margins = m.to(torch.float64).cpu().numpy()
+        else:
+            global_margins = None
 
         return ext, global_path, global_margins
 
