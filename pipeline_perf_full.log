@@ -1,0 +1,39 @@
+[2026-08-23 20:39:41] ==========================================================================================
+[2026-08-23 20:39:41] QURAN FORCED ALIGNMENT - COMPREHENSIVE END-TO-END PERFORMANCE PROFILER
+[2026-08-23 20:39:41] ==========================================================================================
+[2026-08-23 20:39:41] Environment: Colab=True, GPU=Tesla T4 (12.8), ORT_GPU=True
+[2026-08-23 20:39:41] [Stage 0/6] Using cached audio at /content/abdel-mohsen-al-obeikan_002.mp3 (76.9 MB)
+[2026-08-23 20:39:41] Model Path:  /root/.cache/quran-forced-align/zipformer_p_arabic_v3.1.fp16.onnx
+[2026-08-23 20:39:41] Tokens Path: /content/quran-forced-align/model/tokens.txt
+[2026-08-23 20:39:41] [Stage 1/6] Building Quran phoneme & word-slot reference...
+[2026-08-23 20:39:41]   Stage 1 complete: 6117 words, 24530 tokens in 0.1071s
+[2026-08-23 20:39:41] [Stage 2/6] Decoding audio to 16kHz float32 & computing 80-dim Fbank features...
+[2026-08-23 20:39:51]   Stage 2 complete: 5035.9s audio decoded in 0.001s (5035938x realtime)
+[2026-08-23 20:39:51]   Fbank frames: 503622 computed in 9.271s (543x realtime)
+[2026-08-23 20:39:51]   Silence midpoints: 111 detected in 0.324s
+[2026-08-23 20:39:51]   Stage 2 Total: 9.598s
+[2026-08-23 20:39:51] [Stage 3/6] Running Batched Streaming Zipformer2-CTC on GPU (intra-surah splitting)...
+[2026-08-23 20:40:03]   Stage 3 complete: log_probs (125904, 251) in 12.264s (410.6x realtime!)
+[2026-08-23 20:40:03] [Stage 4/6] Running Segmented CTC Forced Alignment on GPU...
+[2026-08-23 20:40:04]   Stage 4 complete: 6117 main-pass word cues aligned in 0.641s (7850.6x realtime!)
+[2026-08-23 20:40:04] [Stage 5/6] Detecting and locally re-aligning repeated phrases...
+[2026-08-23 20:40:04]   Stage 5 complete: 6565 total cues (448 repeated words spliced) in 0.378s
+[2026-08-23 20:40:04] [Stage 6/7] Computing per-word acoustic confidence & building rich records...
+[2026-08-23 20:40:04]   Stage 6 complete: 6565 output records in 0.4168s
+[2026-08-23 20:40:04] [Stage 7/7] Transcoding Loudnorm 96k Opus audio & saving final JSON/SRT artifacts...
+[2026-08-23 20:41:13]   Stage 7 complete: Output Opus (45.3 MB) and JSON (15791.2 KB) generated in 68.746s (73x realtime)
+[2026-08-23 20:41:13] ==========================================================================================
+[2026-08-23 20:41:13] FINAL PERFORMANCE PROFILE BREAKDOWN
+[2026-08-23 20:41:13] ==========================================================================================
+[2026-08-23 20:41:13]   Audio Recitation Span: 5035.94s (83.9 minutes)
+[2026-08-23 20:41:13]   Stage 1 (Phonemes & Slots):     0.1071s  (  0.1%)
+[2026-08-23 20:41:13]   Stage 2 (Audio Load & Fbank):   9.5979s  ( 10.4%)
+[2026-08-23 20:41:13]   Stage 3 (GPU Zipformer CTC):    12.2644s  ( 13.3%) -> 410.6x Realtime
+[2026-08-23 20:41:13]   Stage 4 (GPU Segmented Align):  0.6415s  (  0.7%) -> 7850.6x Realtime
+[2026-08-23 20:41:13]   Stage 5 (Repeat Detection):     0.3775s  (  0.4%)
+[2026-08-23 20:41:13]   Stage 6 (Confidence Scoring):   0.4168s  (  0.5%)
+[2026-08-23 20:41:13]   Stage 7 (Opus + JSON Output):   68.7459s  ( 74.6%)
+[2026-08-23 20:41:13] ------------------------------------------------------------------------------------------
+[2026-08-23 20:41:13]   TOTAL END-TO-END PIPELINE:      92.1637s
+[2026-08-23 20:41:13]   REALTIME THROUGHPUT MULTIPLIER: 54.6x REALTIME
+[2026-08-23 20:41:13] ==========================================================================================
