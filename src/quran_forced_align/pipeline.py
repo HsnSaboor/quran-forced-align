@@ -533,6 +533,7 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
 
         if str(include_istiaatha).lower() in ("auto", "none"):
             has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
+            max_token_len = max(len(t) for t in tok2id if t != "<blank>")
             combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=has_istiaatha)
             strip_aya0 = True
         else:

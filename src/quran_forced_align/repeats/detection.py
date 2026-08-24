@@ -510,18 +510,17 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
             gap_start = c_curr["end_frame"] + 1
             gap_end = c_next["start_frame"] - 1
             gap_len = gap_end - gap_start + 1
-            if c_curr["aya"] == c_next["aya"] and c_curr["sura"] == c_next["sura"] and gap_len >= 10:  # Intra-ayah pause >= ~0.40s (10 frames)
-                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-10:]
-                fwd_words = [c for c in fixed[k + 1 :] if c["aya"] == c_next["aya"] and c["sura"] == c_next["sura"]][:10]
+            if gap_len >= 10:  # Pause gap >= ~0.40s
+                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-6:]
                 best_cand = None
                 
-                from ..decode import fast_ctc_align_c
+                from ..decode import fast_ctc_align_c, token_id_levenshtein_ratio
                 
+                gap_greedy = full_greedy_ids[gap_start:gap_end + 1]
+                gap_dec = _collapse_ctc_ids(gap_greedy.tolist(), blank_id)
                 cand_groups = []
                 for w_len in range(min(len(aya_words), 6), 0, -1):
                     cand_groups.append(aya_words[-w_len:])
-                for w_len in range(min(len(fwd_words), 6), 0, -1):
-                    cand_groups.append(fwd_words[:w_len])
                 
                 for phrase_cands in cand_groups:
                     phrase_tok_ids = []
@@ -554,22 +553,12 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                                 w_s_loc = int(min(valid_starts))
                                 w_e_loc = int(max(valid_ends))
                                 w_dur = w_e_loc - w_s_loc + 1
-                                if nt <= 2:
-                                    min_req = 3
-                                elif nt == 3:
-                                    min_req = 6
-                                elif nt == 4:
-                                    min_req = 10
-                                else:
-                                    min_req = 18
+                                min_req = 3 if nt <= 2 else (6 if nt == 3 else 8)
 
-                                if len(phrase_cands) == 1 and (gap_len < 25 or w_dur < max(8, min_req)):
+                                if w_dur < min_req or w_s_loc <= prev_w_end:
                                     words_valid = False
                                     break
-                                elif w_dur < min_req or w_s_loc <= prev_w_end:
-                                    words_valid = False
-                                    break
-                                prev_w_end = w_s_loc
+                                prev_w_end = w_e_loc
                                 tok_spans = [(int(st), int(en)) if st >= 0 and en >= 0 else (-1, -1) for st, en in zip(w_firsts, w_lasts)]
                                 word_spans.append((c, w_s_loc, w_e_loc, tok_spans, nt, nt))
                                 tok_offset += nt

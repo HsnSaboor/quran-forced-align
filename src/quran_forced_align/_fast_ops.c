@@ -327,14 +327,17 @@ int fast_detect_and_fix_repeats_engine(
     int8_t* consumed = (int8_t*)calloc(num_cues, sizeof(int8_t));
     
     // buffers for max sequence lengths
-    int32_t* decoded_ids = (int32_t*)malloc(T * sizeof(int32_t));
-    int32_t* phrase_ids = (int32_t*)malloc(T * sizeof(int32_t));
-    int32_t* doubled_ids = (int32_t*)malloc(T * sizeof(int32_t));
-    int32_t* path2 = (int32_t*)malloc(T * sizeof(int32_t));
-    int32_t* ext2 = (int32_t*)malloc(T * sizeof(int32_t));
-    int32_t* first_seen = (int32_t*)malloc(T * sizeof(int32_t));
-    int32_t* last_seen = (int32_t*)malloc(T * sizeof(int32_t));
-    int32_t* best_path = (int32_t*)malloc(T * sizeof(int32_t));
+    size_t max_phrase_tokens = (size_t)combined_token_ids_len + 64;
+    size_t max_ext2_len = 4 * max_phrase_tokens + 1;
+    size_t buf_len = (size_t)T > max_ext2_len ? (size_t)T : max_ext2_len;
+    int32_t* decoded_ids = (int32_t*)malloc(buf_len * sizeof(int32_t));
+    int32_t* phrase_ids = (int32_t*)malloc(buf_len * sizeof(int32_t));
+    int32_t* doubled_ids = (int32_t*)malloc(buf_len * sizeof(int32_t));
+    int32_t* path2 = (int32_t*)malloc(buf_len * sizeof(int32_t));
+    int32_t* ext2 = (int32_t*)malloc(buf_len * sizeof(int32_t));
+    int32_t* first_seen = (int32_t*)malloc(buf_len * sizeof(int32_t));
+    int32_t* last_seen = (int32_t*)malloc(buf_len * sizeof(int32_t));
+    int32_t* best_path = (int32_t*)malloc(buf_len * sizeof(int32_t));
 
     for (int i = 0; i < num_cues; ++i) {
         out_K[i] = 0;
@@ -358,8 +361,6 @@ int fast_detect_and_fix_repeats_engine(
         int k_max = words_left_in_aya;
         if (max_repeat_window_words > 0 && k_max > max_repeat_window_words) {
             k_max = max_repeat_window_words;
-        } else if (max_repeat_window_words <= 0 && k_max > 10) {
-            k_max = 10;
         }
 
         int window_end = (i < num_cues - 1) ? (cue_starts[i + 1] - 1) : (T - 1);
