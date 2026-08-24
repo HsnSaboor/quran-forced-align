@@ -101,7 +101,7 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
         heap_alpha = 1;
     }
     
-    int total_cells = T * M;
+    size_t total_cells = (size_t)T * (size_t)M;
     int8_t backptr_stack[65536];
     int8_t* backptr = backptr_stack;
     int heap_bp = 0;
@@ -119,8 +119,8 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
     }
     
     for (int t = 1; t < T; ++t) {
-        const float* lp_t = log_probs + t * V;
-        int8_t* bp_t = backptr + t * M;
+        const float* lp_t = log_probs + (size_t)t * (size_t)V;
+        int8_t* bp_t = backptr + (size_t)t * (size_t)M;
         
         for (int s = 0; s < M; ++s) {
             float emit = lp_t[ext_ptr[s]];
@@ -167,7 +167,7 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
     
     out_path[T - 1] = cur_s;
     for (int t = T - 1; t >= 1; --t) {
-        int8_t step = backptr[t * M + cur_s];
+        int8_t step = backptr[(size_t)t * (size_t)M + (size_t)cur_s];
         cur_s -= step;
         out_path[t - 1] = cur_s;
     }
