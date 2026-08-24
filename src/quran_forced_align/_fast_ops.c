@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 #define MIN3(a, b, c) ((a) < (b) ? ((a) < (c) ? (a) : (c)) : ((b) < (c) ? (b) : (c)))
 #define NEG_INF -1e30f
@@ -236,9 +237,10 @@ int fast_detect_and_fix_repeats_engine(
         if (cue_token_counts[i] == 0) continue;
 
         int dur = cue_ends[i] - cue_starts[i] + 1;
-        float high_cutoff_val = high_ratio * median_dur * (cue_is_ayah_final[i] ? ayah_final_high_ratio_mult : 1.0f);
-        float low_cutoff_val = low_ratio * median_dur;
-        int is_anomalous = (dur < low_cutoff_val || dur > high_cutoff_val);
+        float high_mult = (cue_is_ayah_final[i]) ? ayah_final_high_ratio_mult : 1.0f;
+        float high_cutoff = high_ratio * high_mult * (float)median_dur;
+        float low_cutoff = low_ratio * (float)median_dur;
+        int is_anomalous = (dur < low_cutoff || dur > high_cutoff);
         if (!is_anomalous) continue;
 
         int words_left_in_aya = 1;
@@ -359,7 +361,7 @@ int fast_detect_and_fix_repeats_engine(
             }
             float avg1 = (float)(sum1 / (copy1_end_local - copy1_start_local + 1));
             float avg2 = (float)(sum2 / (copy2_end_local - copy2_start_local + 1));
-            float bilateral = avg1 < avg2 ? avg1 : avg2;
+            float bilateral = (K >= 2) ? (float)((sum1 + sum2) / (copy1_dur + copy2_dur)) : (avg1 < avg2 ? avg1 : avg2);
             
             float required_floor = (K >= 3) ? (confidence_floor - 0.50f) : confidence_floor;
             if (bilateral < required_floor) continue;
@@ -379,7 +381,7 @@ int fast_detect_and_fix_repeats_engine(
             // If gap is large (e.g. >15 frames = >0.6s pause), it is a distinct restart pause, not a trellis artifact
             if (!free_decode_pass && K < 3 && gap_frames <= 15 && margin_above_floor < 0.3f) continue;
             
-            float cand_score = bilateral + 0.25f * (K - 1);
+            float cand_score = bilateral;
             if (cand_score > best_score) {
                 best_score = cand_score;
                 best_K = K;
