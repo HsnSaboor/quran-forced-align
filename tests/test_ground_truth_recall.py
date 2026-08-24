@@ -266,8 +266,8 @@ def test_surah2_ayah91_three_word_repeat(tokens):
     cues = _run_slots(audio_path, slots_91, full_comb_ids, tok2id)
     repeats = [c for c in cues if c[5]]
     
-    assert len(repeats) == 1, f"expected exactly 1 repeat word in Ayah 91, got {len(repeats)}: {[c[0] for c in repeats]}"
-    expected_words = ["وَرَآءَهُۥ"]
+    assert len(repeats) == 3, f"expected exactly 3 repeat words in Ayah 91, got {len(repeats)}: {[c[0] for c in repeats]}"
+    expected_words = ["وَيَكْفُرُونَ", "بِمَا", "وَرَآءَهُۥ"]
     assert [c[0] for c in repeats] == expected_words, f"mismatch in Ayah 91 repeats: {[c[0] for c in repeats]} vs {expected_words}"
 
 

@@ -510,7 +510,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
             gap_start = c_curr["end_frame"] + 1
             gap_end = c_next["start_frame"] - 1
             gap_len = gap_end - gap_start + 1
-            if c_curr["aya"] == c_next["aya"] and c_curr["sura"] == c_next["sura"] and gap_len >= 10:  # Intra-ayah pause >= ~0.40s (10 frames)
+            if gap_len >= 10:  # Pause >= ~0.40s (10 frames)
                 aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-10:]
                 fwd_words = [c for c in fixed[k + 1 :] if c["aya"] == c_next["aya"] and c["sura"] == c_next["sura"]][:10]
                 best_cand = None
@@ -576,8 +576,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                             if words_valid and len(word_spans) == len(phrase_cands):
                                 path_lps = lp_gap[np.arange(len(path_gap)), ext_gap[path_gap]]
                                 avg_lp = float(np.mean(path_lps))
-                                min_lp_req = -0.75 if len(phrase_cands) == 1 else -2.0
-                                if avg_lp >= min_lp_req:
+                                if avg_lp >= -2.5:
                                     best_cand = (phrase_cands, phrase_tok_ids, ext_gap, path_gap, word_spans)
                                     break  # Longest valid matching phrase selected
                                 
