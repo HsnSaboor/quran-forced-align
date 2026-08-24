@@ -244,9 +244,121 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     detection, and confidence scoring, given an ALREADY-COMPUTED
     `log_probs` matrix.
     """
+    import numpy as np
     t4_start = time.perf_counter()
-    log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
+    log("[4/6] CTC forced-alignment over the surah reference...")
     
+    unique_ayahs = []
+    for s in word_slots:
+        if s["aya"] not in unique_ayahs:
+            unique_ayahs.append(s["aya"])
+            
+    min_word_dur_frames = int(MIN_WORD_DUR / seconds_per_frame)
+    T = log_probs.shape[0] if hasattr(log_probs, "shape") else len(log_probs)
+
+    if len(unique_ayahs) > 1 and hasattr(engine, "forced_align_batched"):
+        # 1. Greedy tokens across full log_probs
+        if hasattr(log_probs, "is_cuda") and log_probs.is_cuda:
+            greedy_ids = log_probs.argmax(dim=-1).cpu().numpy()
+        elif hasattr(log_probs, "argmax"):
+            greedy_ids = log_probs.argmax(axis=-1)
+            if hasattr(greedy_ids, "numpy"):
+                greedy_ids = greedy_ids.numpy()
+        else:
+            greedy_ids = np.argmax(log_probs, axis=-1)
+
+        is_non_blank = (greedy_ids != blank_id)
+        prev_greedy = np.pad(greedy_ids[:-1], (1, 0), constant_values=blank_id)
+        is_token_start = is_non_blank & ((greedy_ids != prev_greedy) | (prev_greedy == blank_id))
+        token_frames = np.flatnonzero(is_token_start)
+        total_c = len(token_frames)
+        total_ref = len(combined_token_ids)
+
+        lp_slices = []
+        ref_slices = []
+        slice_meta = []
+
+        for i_aya, aya in enumerate(unique_ayahs):
+            slots_a = [s for s in word_slots if s["aya"] == aya]
+            ref_a = [combined_token_ids[p] for s in slots_a for p in s["token_positions"]]
+            slots_adj = []
+            cur_p = 0
+            for s in slots_a:
+                nt = len(s["token_positions"])
+                s_c = dict(s)
+                s_c["token_positions"] = list(range(cur_p, cur_p + nt))
+                cur_p += nt
+                slots_adj.append(s_c)
+
+            ref_start = slots_a[0]["token_positions"][0]
+            ref_end = slots_a[-1]["token_positions"][-1]
+
+            c_s = int(ref_start * (total_c / max(1, total_ref)))
+            c_e = int(ref_end * (total_c / max(1, total_ref)))
+            f_s = max(0, int(token_frames[min(c_s, total_c - 1)]) - 150)
+            f_e = min(T - 1, int(token_frames[min(c_e, total_c - 1)]) + 150)
+
+            lp_slices.append(log_probs[f_s:f_e + 1])
+            ref_slices.append(ref_a)
+            slice_meta.append((slots_adj, f_s, ref_start, aya))
+
+        align_results = engine.forced_align_batched(lp_slices, ref_slices, blank_id, compute_margins=True)
+        t4_elapsed = time.perf_counter() - t4_start
+        log(f"      {len(unique_ayahs)} ayahs batched-aligned on GPU [{t4_elapsed:.3f}s]")
+
+        all_cues = []
+        t5_s = time.perf_counter()
+        for idx, (ext_a, path_a, margins_a) in enumerate(align_results):
+            slots_adj, f_s, ref_start, aya = slice_meta[idx]
+            if path_a is None:
+                ext_a, path_a, margins_a = engine.forced_align(log_probs, ref_slices[idx], blank_id)
+                f_s = 0
+
+            first_seen_a, last_seen_a = frame_spans_from_path(path_a, len(ext_a))
+            cues_a = extract_word_frame_spans(slots_adj, first_seen_a, last_seen_a)
+            
+            need_repeat_check = False
+            if len(cues_a) >= 2:
+                for k in range(len(cues_a) - 1):
+                    if cues_a[k + 1]["start_frame"] - cues_a[k]["end_frame"] >= 18:
+                        need_repeat_check = True
+                        break
+                if not need_repeat_check:
+                    durs = [c["end_frame"] - c["start_frame"] for c in cues_a]
+                    med = float(np.median(durs)) if durs else 0.0
+                    if med > 0:
+                        for d in durs:
+                            if d < anomaly_low_ratio * med or d > anomaly_high_ratio * med:
+                                need_repeat_check = True
+                                break
+
+            if need_repeat_check:
+                cues_a = detect_and_fix_repeats(
+                    engine, cues_a, lp_slices[idx] if f_s > 0 else log_probs, ref_slices[idx], blank_id, ext_a, path_a,
+                    anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,
+                    ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
+                    confidence_margin=repeat_confidence_margin,
+                    max_repeat_window_words=max_repeat_window_words,
+                )
+
+            cues_a = flag_low_confidence_words(cues_a, lp_slices[idx] if f_s > 0 else log_probs, ext_a, path_a, margins_a)
+
+            if f_s > 0 or ref_start > 0:
+                for c in cues_a:
+                    if f_s > 0:
+                        c["start_frame"] += f_s
+                        c["end_frame"] += f_s
+                        if "token_spans" in c:
+                            c["token_spans"] = [(st + f_s if st >= 0 else -1, en + f_s if en >= 0 else -1) for st, en in c["token_spans"]]
+                    if ref_start > 0 and "token_positions" in c:
+                        c["token_positions"] = [p + ref_start for p in c["token_positions"]]
+
+            all_cues.extend(cues_a)
+
+        t5_elapsed = time.perf_counter() - t5_s
+        log(f"      Repeat detection & confidence scoring complete [{t5_elapsed:.3f}s]")
+        return build_rich_records(all_cues, seconds_per_frame, combined_token_ids, id2tok, strip_istiaatha=strip_istiaatha)
+
     ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
     if ext is None or path is None:
         raise RuntimeError(
