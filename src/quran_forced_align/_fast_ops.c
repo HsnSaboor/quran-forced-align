@@ -118,12 +118,23 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
         int cp_idx = 1;
         for (int t = 1; t < T; ++t) {
             const float* lp_t = log_probs + (size_t)t * (size_t)V;
-            for (int s = 0; s < M; ++s) {
+            int s_min = M - 1 - 2 * (T - 1 - t);
+            if (s_min < 0) s_min = 0;
+            int s_max = 2 * t + 1;
+            if (s_max >= M) s_max = M - 1;
+
+            if (s_min > 0) {
+                for (int s = 0; s < s_min; ++s) cur_alpha[s] = NEG_INF;
+            }
+            for (int s = s_min; s <= s_max; ++s) {
                 float emit = lp_t[ext_ptr[s]];
                 float best_val = prev_alpha[s];
                 if (s > 0 && prev_alpha[s - 1] > best_val) best_val = prev_alpha[s - 1];
                 if (s >= 2 && (s % 2 == 1) && ext_ptr[s] != ext_ptr[s - 2] && prev_alpha[s - 2] > best_val) best_val = prev_alpha[s - 2];
                 cur_alpha[s] = (best_val > NEG_INF / 2) ? (best_val + emit) : NEG_INF;
+            }
+            if (s_max < M - 1) {
+                for (int s = s_max + 1; s < M; ++s) cur_alpha[s] = NEG_INF;
             }
             float* tmp = prev_alpha; prev_alpha = cur_alpha; cur_alpha = tmp;
             
@@ -158,8 +169,15 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
                 int t = t_start + step;
                 const float* lp_t = log_probs + (size_t)t * (size_t)V;
                 int8_t* bp_local = local_bp + (size_t)step * (size_t)M;
-                
-                for (int s = 0; s < M; ++s) {
+                int s_min = M - 1 - 2 * (T - 1 - t);
+                if (s_min < 0) s_min = 0;
+                int s_max = 2 * t + 1;
+                if (s_max >= M) s_max = M - 1;
+
+                if (s_min > 0) {
+                    for (int s = 0; s < s_min; ++s) cur_alpha[s] = NEG_INF;
+                }
+                for (int s = s_min; s <= s_max; ++s) {
                     float emit = lp_t[ext_ptr[s]];
                     float best_val = prev_alpha[s];
                     int8_t best_step = 0;
@@ -167,6 +185,9 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
                     if (s >= 2 && (s % 2 == 1) && ext_ptr[s] != ext_ptr[s - 2] && prev_alpha[s - 2] > best_val) { best_val = prev_alpha[s - 2]; best_step = 2; }
                     bp_local[s] = best_step;
                     cur_alpha[s] = (best_val > NEG_INF / 2) ? (best_val + emit) : NEG_INF;
+                }
+                if (s_max < M - 1) {
+                    for (int s = s_max + 1; s < M; ++s) cur_alpha[s] = NEG_INF;
                 }
                 float* tmp = prev_alpha; prev_alpha = cur_alpha; cur_alpha = tmp;
             }
