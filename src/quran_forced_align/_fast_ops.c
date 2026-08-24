@@ -410,8 +410,9 @@ int fast_detect_and_fix_repeats_engine(
             double ratio_doubled = fast_token_id_levenshtein_ratio(decoded_ids, decoded_len, doubled_ids, L_doubled, 0.0);
             double ratio_single = fast_token_id_levenshtein_ratio(decoded_ids, decoded_len, phrase_ids, L, 0.0);
             
+            double min_margin = (K == 1) ? 0.05 : free_decode_min_margin;
             int free_decode_pass = (ratio_doubled >= free_decode_min_ratio_doubled && 
-                                   (ratio_doubled - ratio_single) >= free_decode_min_margin);
+                                   (ratio_doubled - ratio_single) >= min_margin);
             if (!free_decode_pass) continue;
 
             int align_res = fast_ctc_forced_align(log_probs + window_start * V, window_len, V, doubled_ids, L_doubled, blank_id, path2);
