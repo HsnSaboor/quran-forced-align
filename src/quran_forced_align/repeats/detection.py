@@ -506,11 +506,11 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
     for k in range(len(fixed) - 1):
         c_curr = fixed[k]
         c_next = fixed[k + 1]
-        if c_curr["aya"] == c_next["aya"] and c_curr["sura"] == c_next["sura"] and k > 0:
+        if c_curr["aya"] == c_next["aya"] and c_curr["sura"] == c_next["sura"] and k >= 0:
             gap_start = c_curr["end_frame"] + 1
             gap_end = c_next["start_frame"] - 1
             gap_len = gap_end - gap_start + 1
-            if gap_len >= 18:  # Pause >= ~0.72s (18 frames)
+            if gap_len >= 10:  # Pause >= ~0.40s (10 frames)
                 aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-10:]
                 fwd_words = [c for c in fixed[k + 1 :] if c["aya"] == c_next["aya"] and c["sura"] == c_next["sura"]][:10]
                 best_cand = None
