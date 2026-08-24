@@ -98,7 +98,7 @@ def flag_low_confidence_words(cues, log_probs, ext, path, margins,
         sf, ef = c["start_frame"], c["end_frame"]
         if ef >= sf:
             c["avg_logprob"] = float((cum_logprobs[ef + 1] - cum_logprobs[sf]) / (ef - sf + 1))
-            c["min_decision_margin"] = float(np.min(margins[sf : ef + 1]))
+            c["min_decision_margin"] = per_word_min_margin(margins, sf, ef)
         else:
             c["avg_logprob"] = -np.inf
             c["min_decision_margin"] = np.inf
