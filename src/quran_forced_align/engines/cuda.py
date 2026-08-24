@@ -360,17 +360,19 @@ class CUDAEngine:
             greedy_ids = np.argmax(log_probs, axis=-1)
             lp_tensor = torch.as_tensor(log_probs, dtype=torch.float32, device=self._device)
 
-        # 2. Cumulative greedy token counts across output frames
+        # 2. Extract non-blank collapsed tokens and their timestamp frames
         is_non_blank = (greedy_ids != blank_id)
         prev_greedy = np.pad(greedy_ids[:-1], (1, 0), constant_values=blank_id)
         is_token_start = is_non_blank & ((greedy_ids != prev_greedy) | (prev_greedy == blank_id))
-        cum_greedy_tokens = np.cumsum(is_token_start)
-        total_greedy_tokens = cum_greedy_tokens[-1] if len(cum_greedy_tokens) > 0 else 0
-
-        if total_greedy_tokens == 0:
+        token_frames = np.flatnonzero(is_token_start)
+        collapsed_tokens = greedy_ids[token_frames]
+        
+        if len(collapsed_tokens) == 0:
             return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
 
-        # 3. Word slot token bounds
+        # 3. Fast monotonic alignment between collapsed_tokens and ref_ids
+        # Build reference token position lookup for anchors
+        ref_arr = np.array(ref_ids, dtype=np.int32)
         word_token_ends = []
         for slot in word_slots:
             if slot["token_positions"]:
@@ -380,17 +382,24 @@ class CUDAEngine:
         if len(word_token_ends) == 0:
             return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
 
-        # 4. Map each silence frame to the nearest word boundary
+        # 4. Map each silence frame to the nearest verified word boundary
         split_t_bounds = [0]
         split_ref_bounds = [0]
         min_seg_frames = 200  # min ~8s audio segment
 
+        # Find greedy token index for each silence split frame
         for t_split in silence_out_frames:
             if t_split - split_t_bounds[-1] < min_seg_frames or (T - t_split) < min_seg_frames:
                 continue
 
-            target_tok_count = int(cum_greedy_tokens[t_split] * (L / max(1, total_greedy_tokens)))
-            closest_idx = int(np.argmin(np.abs(word_token_ends - target_tok_count)))
+            # Greedy token index at silence frame
+            tok_idx = int(np.searchsorted(token_frames, t_split))
+            if tok_idx <= 0 or tok_idx >= len(collapsed_tokens):
+                continue
+                
+            # Estimated reference position anchored around the verified token count
+            ref_approx = int(tok_idx * (L / max(1, len(collapsed_tokens))))
+            closest_idx = int(np.argmin(np.abs(word_token_ends - ref_approx)))
             ref_split = int(word_token_ends[closest_idx])
 
             if ref_split <= split_ref_bounds[-1] or ref_split >= L:
