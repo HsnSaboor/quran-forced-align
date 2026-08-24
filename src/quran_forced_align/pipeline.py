@@ -245,14 +245,23 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     `log_probs` matrix.
     """
     t4_start = time.perf_counter()
-    log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
+    log("[4/6] CTC forced-alignment over the surah reference...")
     
-    ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
-    if ext is None or path is None:
-        raise RuntimeError(
-            "forced alignment failed: audio too short for this surah's reference "
-            "(not enough frames to fit the blank-interleaved trellis)"
+    ext, path, margins = None, None, None
+    if silence_feature_frames is not None and hasattr(engine, "forced_align_segmented"):
+        ext, path, margins = engine.forced_align_segmented(
+            log_probs, combined_token_ids, blank_id, silence_feature_frames, word_slots
         )
+        if ext is not None:
+            log("      (Silence-anchored segmented alignment successful)")
+
+    if ext is None:
+        ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
+        if ext is None:
+            raise RuntimeError(
+                "forced alignment failed: audio too short for this surah's reference "
+                "(not enough frames to fit the blank-interleaved trellis)"
+            )
         
     first_seen, last_seen = frame_spans_from_path(path, len(ext))
     cues = extract_word_frame_spans(word_slots, first_seen, last_seen)

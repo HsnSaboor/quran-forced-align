@@ -377,35 +377,35 @@ class CUDAEngine:
 
         # 3. Fast monotonic alignment between collapsed_tokens and ref_ids
         # Build reference token position lookup for anchors
-        ref_arr = np.array(ref_ids, dtype=np.int32)
-        word_token_ends = []
+        # Extract ayah boundary token indices
+        ayah_end_token_indices = []
         for slot in word_slots:
-            if slot["token_positions"]:
-                word_token_ends.append(slot["token_positions"][-1] + 1)
-        word_token_ends = np.array(word_token_ends, dtype=np.int32)
+            if slot.get("is_ayah_final") and slot.get("token_positions"):
+                ayah_end_token_indices.append(slot["token_positions"][-1] + 1)
+        if not ayah_end_token_indices:
+            for slot in word_slots:
+                if slot.get("token_positions"):
+                    ayah_end_token_indices.append(slot["token_positions"][-1] + 1)
+        ayah_end_token_indices = np.array(sorted(list(set(ayah_end_token_indices))), dtype=np.int32)
 
-        if len(word_token_ends) == 0:
+        if len(ayah_end_token_indices) == 0:
             return self.forced_align(log_probs, ref_ids, blank_id, compute_margins=compute_margins)
 
-        # 4. Map each silence frame to the nearest verified word boundary
+        # 4. Map each silence frame to the nearest verified ayah boundary
         split_t_bounds = [0]
         split_ref_bounds = [0]
-        min_seg_frames = 200  # min ~8s audio segment
+        min_seg_frames = 250  # min ~10s audio segment
 
-        # Find greedy token index for each silence split frame
         for t_split in silence_out_frames:
             if t_split - split_t_bounds[-1] < min_seg_frames or (T - t_split) < min_seg_frames:
                 continue
 
-            # Greedy token index at silence frame
             tok_idx = int(np.searchsorted(token_frames, t_split))
             if tok_idx <= 0 or tok_idx >= len(collapsed_tokens):
                 continue
                 
-            # Estimated reference position anchored around the verified token count
-            ref_approx = int(tok_idx * (L / max(1, len(collapsed_tokens))))
-            closest_idx = int(np.argmin(np.abs(word_token_ends - ref_approx)))
-            ref_split = int(word_token_ends[closest_idx])
+            closest_idx = int(np.argmin(np.abs(ayah_end_token_indices - tok_idx)))
+            ref_split = int(ayah_end_token_indices[closest_idx])
 
             if ref_split <= split_ref_bounds[-1] or ref_split >= L:
                 continue
