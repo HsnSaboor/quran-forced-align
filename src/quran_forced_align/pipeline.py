@@ -244,113 +244,15 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     detection, and confidence scoring, given an ALREADY-COMPUTED
     `log_probs` matrix.
     """
-    import numpy as np
-    from .decode import fast_ctc_align_c
-
     t4_start = time.perf_counter()
-    log("[4/6] CTC forced-alignment over the surah reference...")
+    log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
     
-    unique_ayahs = []
-    for s in word_slots:
-        if s["aya"] not in unique_ayahs:
-            unique_ayahs.append(s["aya"])
-            
-    min_word_dur_frames = int(MIN_WORD_DUR / seconds_per_frame)
-    log_probs_np = log_probs.cpu().numpy() if hasattr(log_probs, "cpu") else np.asarray(log_probs)
-    T = len(log_probs_np)
-
-    if len(unique_ayahs) > 1:
-        all_cues = []
-        last_end_frame = 0
-        t5_elapsed = 0.0
-        t6_elapsed = 0.0
-
-        for i_aya, aya in enumerate(unique_ayahs):
-            slots_a = [s for s in word_slots if s["aya"] == aya]
-            comb_ids_a = [combined_token_ids[p] for s in slots_a for p in s["token_positions"]]
-            slots_adj = []
-            cur_p = 0
-            for s in slots_a:
-                nt = len(s["token_positions"])
-                s_c = dict(s)
-                s_c["token_positions"] = list(range(cur_p, cur_p + nt))
-                cur_p += nt
-                slots_adj.append(s_c)
-
-            ref_start = slots_a[0]["token_positions"][0]
-
-            # Pass 1: Lookahead window to locate the spoken ayah
-            f_s = max(0, last_end_frame - 15)
-            f_e = min(T, f_s + max(1200, len(comb_ids_a) * 45))
-            lp_a = log_probs_np[f_s:f_e]
-
-            ext_a, path_a, _ = fast_ctc_align_c(lp_a, comb_ids_a, blank_id)
-            if path_a is None:
-                f_e = min(T, f_s + 3000)
-                lp_a = log_probs_np[f_s:f_e]
-                ext_a, path_a, _ = fast_ctc_align_c(lp_a, comb_ids_a, blank_id)
-                if path_a is None:
-                    f_s = 0
-                    lp_a = log_probs_np
-                    ext_a, path_a, _ = fast_ctc_align_c(lp_a, comb_ids_a, blank_id)
-
-            first_seen_a, last_seen_a = frame_spans_from_path(path_a, len(ext_a))
-            valid_starts = [first_seen_a[2 * p + 1] for p in range(len(comb_ids_a)) if first_seen_a[2 * p + 1] >= 0]
-            valid_lasts = [last_seen_a[2 * p + 1] for p in range(len(comb_ids_a)) if last_seen_a[2 * p + 1] >= 0]
-            s_rel = min(valid_starts) if valid_starts else 0
-            e_rel = max(valid_lasts) if valid_lasts else len(lp_a) - 1
-
-            # Pass 2: Tight crop around spoken duration to avoid silence pause distortion
-            crop_s = max(0, s_rel - 10)
-            crop_e = min(len(lp_a), e_rel + 15)
-            f_s_tight = f_s + crop_s
-            lp_tight = lp_a[crop_s:crop_e]
-
-            ext_t, path_t, _ = fast_ctc_align_c(lp_tight, comb_ids_a, blank_id)
-            if path_t is None:
-                ext_t, path_t = ext_a, path_a
-                f_s_tight = f_s
-                lp_tight = lp_a
-
-            f_s_p, l_s_p = frame_spans_from_path(path_t, len(ext_t))
-            cues_a = extract_word_frame_spans(slots_adj, f_s_p, l_s_p)
-
-            t5_s = time.perf_counter()
-            cues_a = detect_and_fix_repeats(
-                engine, cues_a, lp_tight, comb_ids_a, blank_id, ext_t, path_t,
-                anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,
-                ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
-                confidence_margin=repeat_confidence_margin,
-                max_repeat_window_words=max_repeat_window_words,
-            )
-            t5_elapsed += (time.perf_counter() - t5_s)
-
-            t6_s = time.perf_counter()
-            cues_a = flag_low_confidence_words(cues_a, lp_tight, ext_t, path_t, None)
-            t6_elapsed += (time.perf_counter() - t6_s)
-
-            for c in cues_a:
-                c["start_frame"] += f_s_tight
-                c["end_frame"] += f_s_tight
-                if "token_spans" in c:
-                    c["token_spans"] = [(st + f_s_tight if st >= 0 else -1, en + f_s_tight if en >= 0 else -1) for st, en in c["token_spans"]]
-                if ref_start > 0 and "token_positions" in c:
-                    c["token_positions"] = [p + ref_start for p in c["token_positions"]]
-
-            if cues_a:
-                last_end_frame = max(c["end_frame"] for c in cues_a)
-
-            all_cues.extend(cues_a)
-
-        t4_elapsed = time.perf_counter() - t4_start
-        log(f"      {len(all_cues)}/{len(word_slots)} words aligned drift-free across {len(unique_ayahs)} ayahs [{t4_elapsed:.3f}s]")
-        log(f"      Repeat detection complete [{t5_elapsed:.3f}s]")
-        log(f"      Confidence scoring complete [{t6_elapsed:.3f}s]")
-        total = t4_elapsed + t5_elapsed + t6_elapsed
-        log(f"      Stages 4-6 total: {total:.3f}s (align: {t4_elapsed:.3f}s, repeats: {t5_elapsed:.3f}s, confidence: {t6_elapsed:.3f}s)")
-        return build_rich_records(all_cues, seconds_per_frame, combined_token_ids, id2tok, strip_istiaatha=strip_istiaatha)
-
     ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
+    if ext is None or path is None:
+        raise RuntimeError(
+            "forced alignment failed: audio too short for this surah's reference "
+            "(not enough frames to fit the blank-interleaved trellis)"
+        )
         
     first_seen, last_seen = frame_spans_from_path(path, len(ext))
     cues = extract_word_frame_spans(word_slots, first_seen, last_seen)
