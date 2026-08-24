@@ -11,7 +11,10 @@ import numpy as np
 import torch
 
 # Ensure src is in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+if "__file__" in globals():
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+elif os.path.exists("/content/quran-forced-align/src"):
+    sys.path.insert(0, "/content/quran-forced-align/src")
 
 from quran_forced_align.model_manager import resolve_model, resolve_tokens, verify_colab_environment
 from quran_forced_align.audio import load_audio_as_wav16k
