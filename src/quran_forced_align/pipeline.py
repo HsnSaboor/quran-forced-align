@@ -176,7 +176,8 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
         tok2id, id2tok, blank_id, max_token_len = tokens_path
     else:
         tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
-    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=include_istiaatha)
+    init_istiaatha = False if str(include_istiaatha).lower() in ("auto", "none") else bool(include_istiaatha)
+    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=init_istiaatha)
     t1_elapsed = time.perf_counter() - t1_start
     log(f"      {len(word_slots)} words total, {len(combined_token_ids)} reference tokens [{t1_elapsed:.3f}s]")
 
@@ -294,7 +295,7 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
 
 def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
                  device: str = "cpu", intra_surah_split: bool | None = None,
-                 include_istiaatha: bool = True,
+                 include_istiaatha: bool | str = "auto",
                  anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
                  anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
                  ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
