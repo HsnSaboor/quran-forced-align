@@ -397,7 +397,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
         engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
         anomaly_low_ratio, anomaly_high_ratio, ayah_final_high_ratio_mult,
         repeat_confidence_margin, max_repeat_window_words, log,
-        silence_feature_frames=silence_feature_frames,
+        silence_feature_frames=None,
         strip_istiaatha=strip_aya0,
     )
     t_e2e = time.perf_counter() - t_e2e_start
