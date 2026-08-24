@@ -512,13 +512,18 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
             gap_len = gap_end - gap_start + 1
             if gap_len >= 18:  # Pause >= ~0.72s (18 frames)
                 aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-10:]
+                fwd_words = [c for c in fixed[k + 1 :] if c["aya"] == c_next["aya"] and c["sura"] == c_next["sura"]][:10]
                 best_cand = None
                 
                 from ..decode import fast_ctc_align_c
                 
-                # Test suffix phrases from longest (up to 6 words) down to 1
+                cand_groups = []
                 for w_len in range(min(len(aya_words), 6), 0, -1):
-                    phrase_cands = aya_words[-w_len:]
+                    cand_groups.append(aya_words[-w_len:])
+                for w_len in range(min(len(fwd_words), 6), 0, -1):
+                    cand_groups.append(fwd_words[:w_len])
+                
+                for phrase_cands in cand_groups:
                     phrase_tok_ids = []
                     for c in phrase_cands:
                         phrase_tok_ids.extend([combined_token_ids[pos] for pos in c.get("token_positions", [])])
@@ -557,7 +562,7 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                                 else:
                                     min_req = 18
 
-                                if w_len == 1 and (gap_len < 25 or w_dur < max(8, min_req)):
+                                if len(phrase_cands) == 1 and (gap_len < 25 or w_dur < max(8, min_req)):
                                     words_valid = False
                                     break
                                 elif w_dur < min_req or w_s_loc <= prev_w_end:
