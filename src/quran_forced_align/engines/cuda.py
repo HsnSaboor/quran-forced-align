@@ -118,15 +118,20 @@ class CUDAEngine:
     """
 
     def __init__(self, model_path, enable_trt=None):
-        # torch/torchaudio/onnxruntime's GPU build are optional dependencies
-        # (see pyproject.toml's `cuda` extra) -- importing them lazily here,
-        # not at module load time, means every CPU-only caller (the
-        # default engine, and this whole package's test suite on a
-        # CPU-only machine) never needs torch/torchaudio/onnxruntime-gpu
-        # installed at all, matching `engines.cpu.CPUEngine`'s zero-torch
-        # footprint.
-        import onnxruntime as ort
+        import os, sys
         import torch
+        # Ensure PyTorch CUDA shared libraries (libcudnn, libcublas) are discoverable by ONNX Runtime
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.isdir(torch_lib):
+            cur_ld = os.environ.get("LD_LIBRARY_PATH", "")
+            if torch_lib not in cur_ld:
+                os.environ["LD_LIBRARY_PATH"] = f"{torch_lib}:{cur_ld}"
+            if hasattr(os, "add_dll_directory"):
+                try:
+                    os.add_dll_directory(torch_lib)
+                except Exception:
+                    pass
+        import onnxruntime as ort
 
         # Cache of the last run_inference() call's (numpy array, resident
         # GPU tensor) pair -- see forced_align's use of this below. Reset
