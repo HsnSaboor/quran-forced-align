@@ -102,6 +102,91 @@ int fast_ctc_forced_align(const float* log_probs, int T, int V, const int32_t* r
     }
     
     size_t total_cells = (size_t)T * (size_t)M;
+    
+    // For large trellises (e.g. whole-surah T*M > 10M cells), use exact O(sqrt(T)*M) checkpointed DP
+    if (total_cells > 10000000ULL) {
+        int chunk = (int)sqrt((double)T);
+        if (chunk < 2) chunk = 2;
+        int num_checkpoints = (T + chunk - 1) / chunk + 2;
+        float* checkpoints = (float*)malloc((size_t)num_checkpoints * (size_t)M * sizeof(float));
+        
+        for (int s = 0; s < M; ++s) prev_alpha[s] = NEG_INF;
+        prev_alpha[0] = log_probs[ext_ptr[0]];
+        if (M > 1) prev_alpha[1] = log_probs[ext_ptr[1]];
+        memcpy(checkpoints, prev_alpha, M * sizeof(float));
+        
+        int cp_idx = 1;
+        for (int t = 1; t < T; ++t) {
+            const float* lp_t = log_probs + (size_t)t * (size_t)V;
+            for (int s = 0; s < M; ++s) {
+                float emit = lp_t[ext_ptr[s]];
+                float best_val = prev_alpha[s];
+                if (s > 0 && prev_alpha[s - 1] > best_val) best_val = prev_alpha[s - 1];
+                if (s >= 2 && (s % 2 == 1) && ext_ptr[s] != ext_ptr[s - 2] && prev_alpha[s - 2] > best_val) best_val = prev_alpha[s - 2];
+                cur_alpha[s] = (best_val > NEG_INF / 2) ? (best_val + emit) : NEG_INF;
+            }
+            float* tmp = prev_alpha; prev_alpha = cur_alpha; cur_alpha = tmp;
+            
+            if (t % chunk == 0 || t == T - 1) {
+                memcpy(checkpoints + (size_t)cp_idx * (size_t)M, prev_alpha, M * sizeof(float));
+                cp_idx++;
+            }
+        }
+        
+        int cur_s = M - 1;
+        if (M > 1 && prev_alpha[M - 2] > prev_alpha[M - 1]) cur_s = M - 2;
+        if (prev_alpha[cur_s] <= NEG_INF / 2) {
+            if (heap_ext) free(ext_ptr);
+            if (heap_alpha) free(prev_alpha < cur_alpha ? prev_alpha : cur_alpha);
+            free(checkpoints);
+            return -1;
+        }
+        out_path[T - 1] = cur_s;
+        
+        int8_t* local_bp = (int8_t*)malloc((size_t)(chunk + 2) * (size_t)M * sizeof(int8_t));
+        int t_end = T - 1;
+        int cp_curr = cp_idx - 1;
+        
+        while (t_end > 0) {
+            int t_start = t_end - (t_end % chunk == 0 ? chunk : (t_end % chunk));
+            if (t_start < 0) t_start = 0;
+            int interval_len = t_end - t_start;
+            cp_curr--;
+            
+            memcpy(prev_alpha, checkpoints + (size_t)cp_curr * (size_t)M, M * sizeof(float));
+            for (int step = 1; step <= interval_len; ++step) {
+                int t = t_start + step;
+                const float* lp_t = log_probs + (size_t)t * (size_t)V;
+                int8_t* bp_local = local_bp + (size_t)step * (size_t)M;
+                
+                for (int s = 0; s < M; ++s) {
+                    float emit = lp_t[ext_ptr[s]];
+                    float best_val = prev_alpha[s];
+                    int8_t best_step = 0;
+                    if (s > 0 && prev_alpha[s - 1] > best_val) { best_val = prev_alpha[s - 1]; best_step = 1; }
+                    if (s >= 2 && (s % 2 == 1) && ext_ptr[s] != ext_ptr[s - 2] && prev_alpha[s - 2] > best_val) { best_val = prev_alpha[s - 2]; best_step = 2; }
+                    bp_local[s] = best_step;
+                    cur_alpha[s] = (best_val > NEG_INF / 2) ? (best_val + emit) : NEG_INF;
+                }
+                float* tmp = prev_alpha; prev_alpha = cur_alpha; cur_alpha = tmp;
+            }
+            
+            for (int step = interval_len; step >= 1; --step) {
+                int t = t_start + step;
+                int8_t step_taken = local_bp[(size_t)step * (size_t)M + (size_t)cur_s];
+                cur_s -= step_taken;
+                out_path[t - 1] = cur_s;
+            }
+            t_end = t_start;
+        }
+        
+        free(local_bp);
+        free(checkpoints);
+        if (heap_ext) free(ext_ptr);
+        if (heap_alpha) free(prev_alpha < cur_alpha ? prev_alpha : cur_alpha);
+        return 0;
+    }
+    
     int8_t backptr_stack[65536];
     int8_t* backptr = backptr_stack;
     int heap_bp = 0;

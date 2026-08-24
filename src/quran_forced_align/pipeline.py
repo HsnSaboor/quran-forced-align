@@ -247,12 +247,7 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     t4_start = time.perf_counter()
     log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
     
-    if silence_feature_frames and hasattr(engine, "forced_align_segmented"):
-        ext, path, margins = engine.forced_align_segmented(
-            log_probs, combined_token_ids, blank_id, silence_feature_frames, word_slots
-        )
-    else:
-        ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
+    ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
     if ext is None or path is None:
         raise RuntimeError(
             "forced alignment failed: audio too short for this surah's reference "
