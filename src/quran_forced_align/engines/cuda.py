@@ -309,13 +309,6 @@ class CUDAEngine:
         if T < 1 or L < 1:
             return None, None, None
 
-        if (T * (2 * L + 1)) > 50_000_000:
-            from ..decode import fast_ctc_align_c
-            log_probs_np = log_probs.cpu().numpy() if isinstance(log_probs, torch.Tensor) else log_probs
-            ext, path, _ = fast_ctc_align_c(log_probs_np, ref_ids, blank_id)
-            if ext is not None and path is not None:
-                return ext, path, None
-            return ctc_forced_align(log_probs_np, ref_ids, blank_id)
 
         ext = build_ext(ref_ids, blank_id)
         if isinstance(log_probs, torch.Tensor):
