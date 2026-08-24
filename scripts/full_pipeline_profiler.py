@@ -131,10 +131,10 @@ def run_profiler(audio_path_override: str = None):
     log_probs_shape = tuple(log_probs.shape)
     log_msg(f"  Stage 3 complete: log_probs {log_probs_shape} in {t_stage3:.3f}s ({audio_sec/max(0.001, t_stage3):.1f}x realtime!)", f_log)
     
-    # Stage 4: GPU Segmented Forced Alignment
+    # Stage 4: GPU Whole-Surah Forced Alignment
     t0 = time.perf_counter()
-    log_msg("[Stage 4/6] Running Segmented CTC Forced Alignment on GPU...", f_log)
-    ext, path, margins = engine.forced_align_segmented(log_probs, combined_token_ids, blank_id, sil_frames, word_slots)
+    log_msg("[Stage 4/6] Running CTC Forced Alignment on GPU...", f_log)
+    ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
     torch.cuda.synchronize()
     first_seen, last_seen = frame_spans_from_path(path, len(ext))
     cues = extract_word_frame_spans(word_slots, first_seen, last_seen)
@@ -195,6 +195,14 @@ def run_profiler(audio_path_override: str = None):
     log_msg(f"  REALTIME THROUGHPUT MULTIPLIER: {audio_sec / max(0.001, t_pipeline_total):.1f}x REALTIME", f_log)
     log_msg("=" * 90, f_log)
     
+    log_msg("\nVERIFYING REPEAT OUTPUT QUALITY FOR SURAH 2 AYAH 91 & 109:", f_log)
+    for aya_num, expected in [(91, 3), (109, 4)]:
+        aya_recs = [r for r in records if r.get("aya") == aya_num or r.get("ayah") == aya_num]
+        reps = [r for r in aya_recs if r.get("is_repeat")]
+        log_msg(f"  Ayah {aya_num}: Total Words = {len(aya_recs)}, Repeats = {len(reps)} (Expected: {expected})", f_log)
+        for i, r in enumerate(reps):
+            log_msg(f"    [REPEAT #{i+1}] {r['start']:.2f}s -> {r['end']:.2f}s | {r['word']}", f_log)
+
     f_log.close()
     print(f"\nFull performance logs saved to {LOG_FILE}")
 
