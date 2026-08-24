@@ -556,8 +556,11 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                                     min_req = 10
                                 else:
                                     min_req = 18
-                                    
-                                if w_dur < min_req or w_s_loc <= prev_w_end:
+
+                                if w_len == 1 and (gap_len < 25 or w_dur < max(8, min_req)):
+                                    words_valid = False
+                                    break
+                                elif w_dur < min_req or w_s_loc <= prev_w_end:
                                     words_valid = False
                                     break
                                 prev_w_end = w_s_loc
