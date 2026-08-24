@@ -216,3 +216,74 @@ def test_C_repeat_no_pause_recovered(tokens):
             f"{recovered[0]!r} end time {recovered[2]:.3f}s not within "
             f"{TIMING_TOLERANCE_SEC}s of oracle {expected[2]:.3f}s"
         )
+
+
+def _run_slots(audio_path, slots_ayah, full_comb_ids, tok2id,
+               anomaly_low_ratio=0.15, anomaly_high_ratio=2.2,
+               ayah_final_high_ratio_mult=1.3, confidence_margin=0.6):
+    comb_ids_a = [full_comb_ids[p] for s in slots_ayah for p in s["token_positions"]]
+    slots_adj = []
+    cur_p = 0
+    for s in slots_ayah:
+        nt = len(s["token_positions"])
+        s_c = dict(s)
+        s_c["token_positions"] = list(range(cur_p, cur_p + nt))
+        cur_p += nt
+        slots_adj.append(s_c)
+
+    samples = _load_wav16k_mono(audio_path)
+    feats = compute_fbank_features(samples, tail_silence_sec=0.3)
+
+    engine = CPUEngine(MODEL_PATH)
+    log_probs, seconds_per_frame = engine.run_inference(feats)
+
+    ext, path, _margins = engine.forced_align(log_probs, comb_ids_a, tok2id["<blank>"])
+    assert ext is not None, "forced alignment failed"
+
+    first_seen, last_seen = frame_spans_from_path(path, len(ext))
+    cues = extract_word_frame_spans(slots_adj, first_seen, last_seen)
+
+    min_word_dur_frames = MIN_WORD_DUR / seconds_per_frame
+    cues2 = detect_and_fix_repeats(
+        engine, cues, log_probs, comb_ids_a, tok2id["<blank>"], ext, path,
+        anomaly_low_ratio=anomaly_low_ratio,
+        anomaly_high_ratio=anomaly_high_ratio,
+        min_word_dur_frames=min_word_dur_frames,
+    )
+    return cues_to_tuples(cues2, seconds_per_frame)
+
+
+def test_surah2_ayah91_three_word_repeat(tokens):
+    """Verify that Surah 2 Ayah 91 in Abdel-Mohsen Al-Obeikan recitation
+    recovers EXACTLY the 3 repeated words: ['وَيَكْفُرُونَ', 'بِمَا', 'وَرَآءَهُۥ'].
+    """
+    tok2id, id2tok, blank_id, max_token_len = tokens
+    from quran_forced_align.reference import build_combined_reference
+    full_comb_ids, full_slots = build_combined_reference(2, tok2id, max_token_len, include_istiaatha=False)
+    slots_91 = [s for s in full_slots if s["aya"] == 91]
+    
+    audio_path = os.path.join(FIXTURES_DIR, "test_surah2_ayah91.wav")
+    cues = _run_slots(audio_path, slots_91, full_comb_ids, tok2id)
+    repeats = [c for c in cues if c[5]]
+    
+    assert len(repeats) == 3, f"expected exactly 3 repeat words in Ayah 91, got {len(repeats)}: {[c[0] for c in repeats]}"
+    expected_words = ["وَيَكْفُرُونَ", "بِمَا", "وَرَآءَهُۥ"]
+    assert [c[0] for c in repeats] == expected_words, f"mismatch in Ayah 91 repeats: {[c[0] for c in repeats]} vs {expected_words}"
+
+
+def test_surah2_ayah109_four_word_repeat(tokens):
+    """Verify that Surah 2 Ayah 109 in Abdel-Mohsen Al-Obeikan recitation
+    recovers EXACTLY the 4 repeated words: ['مِّنۢ', 'بَعْدِ', 'مَا', 'تَبَيَّنَ'].
+    """
+    tok2id, id2tok, blank_id, max_token_len = tokens
+    from quran_forced_align.reference import build_combined_reference
+    full_comb_ids, full_slots = build_combined_reference(2, tok2id, max_token_len, include_istiaatha=False)
+    slots_109 = [s for s in full_slots if s["aya"] == 109]
+    
+    audio_path = os.path.join(FIXTURES_DIR, "test_surah2_ayah109.wav")
+    cues = _run_slots(audio_path, slots_109, full_comb_ids, tok2id)
+    repeats = [c for c in cues if c[5]]
+    
+    assert len(repeats) == 4, f"expected exactly 4 repeat words in Ayah 109, got {len(repeats)}: {[c[0] for c in repeats]}"
+    expected_words = ["مِّنۢ", "بَعْدِ", "مَا", "تَبَيَّنَ"]
+    assert [c[0] for c in repeats] == expected_words, f"mismatch in Ayah 109 repeats: {[c[0] for c in repeats]} vs {expected_words}"

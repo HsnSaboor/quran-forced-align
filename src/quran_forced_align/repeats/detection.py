@@ -286,6 +286,9 @@ def _detect_and_fix_repeats_pass(
     if not cues:
         return cues
 
+    # 1. First Pass: Scan inter-word pause gaps for clean spoken multi-word phrase restarts
+    cues = _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_word_dur_frames)
+
     durations = np.array([c["end_frame"] - c["start_frame"] for c in cues], dtype=np.float64)
     median = float(np.median(durations)) if len(durations) else 0.0
     if median <= 0:

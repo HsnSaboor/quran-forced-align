@@ -103,7 +103,11 @@ def run_profiler(audio_path_override: str = None):
     audio_sec = len(samples) / 16000.0
     
     t_fb0 = time.perf_counter()
-    feats = compute_fbank_features(samples)
+    if torch.cuda.is_available():
+        from quran_forced_align.features import compute_fbank_features_gpu
+        feats = compute_fbank_features_gpu(samples)
+    else:
+        feats = compute_fbank_features(samples)
     t_fb = time.perf_counter() - t_fb0
     
     t_sil0 = time.perf_counter()
