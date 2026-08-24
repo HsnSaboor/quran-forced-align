@@ -456,7 +456,10 @@ class CUDAEngine:
                 seg_path_t = _aligned_labels_to_state_path(seg_tokens.to(torch.int64), seg_ext_t, blank_id)
             except Exception:
                 sub_lp_np = lp_tensor[t_s:t_e].cpu().numpy() if isinstance(lp_tensor, torch.Tensor) else lp_tensor[t_s:t_e]
-                _, seg_path_np, _ = ctc_forced_align(sub_lp_np, seg_ref_slice, blank_id)
+                from ..decode import fast_ctc_align_c
+                _, seg_path_np, _ = fast_ctc_align_c(sub_lp_np, seg_ref_slice, blank_id)
+                if seg_path_np is None:
+                    _, seg_path_np, _ = ctc_forced_align(sub_lp_np, seg_ref_slice, blank_id)
                 seg_path_t = torch.as_tensor(seg_path_np, dtype=torch.int64, device=self._device)
 
             global_path_t[t_s:t_e] = seg_path_t + (2 * l_s)
