@@ -574,8 +574,11 @@ def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_
                                 tok_offset += nt
                                 
                             if words_valid and len(word_spans) == len(phrase_cands):
-                                best_cand = (phrase_cands, phrase_tok_ids, ext_gap, path_gap, word_spans)
-                                break  # Longest valid matching phrase selected
+                                path_lps = lp_gap[np.arange(len(path_gap)), ext_gap[path_gap]]
+                                avg_lp = float(np.mean(path_lps))
+                                if avg_lp >= -2.5:
+                                    best_cand = (phrase_cands, phrase_tok_ids, ext_gap, path_gap, word_spans)
+                                    break  # Longest valid matching phrase selected
                                 
                 if best_cand:
                     phrase_cands, match_tok_ids, ext_gap, path_gap, word_spans = best_cand
