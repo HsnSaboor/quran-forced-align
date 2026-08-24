@@ -277,8 +277,9 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
         all_cues = []
         t5_elapsed = 0.0
         t6_elapsed = 0.0
+        last_end_frame = 0
 
-        for aya in unique_ayahs:
+        for i_aya, aya in enumerate(unique_ayahs):
             slots_a = [s for s in word_slots if s["aya"] == aya]
             comb_ids_a = [combined_token_ids[p] for s in slots_a for p in s["token_positions"]]
             slots_adj = []
@@ -293,16 +294,26 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
             ref_start = slots_a[0]["token_positions"][0]
             ref_end = slots_a[-1]["token_positions"][-1]
 
-            c_s = int(ref_start * (total_c / max(1, total_ref)))
-            c_e = int(ref_end * (total_c / max(1, total_ref)))
-            f_s = max(0, int(token_frames[min(c_s, total_c - 1)]) - 125)
-            f_e = min(T - 1, int(token_frames[min(c_e, total_c - 1)]) + 125)
+            if i_aya == 0:
+                f_s = 0
+            else:
+                f_s = max(0, last_end_frame - 75)
+
+            if i_aya == len(unique_ayahs) - 1:
+                f_e = T - 1
+            else:
+                next_slots = [s for s in word_slots if s["aya"] == unique_ayahs[i_aya + 1]]
+                next_ref_start = next_slots[0]["token_positions"][0]
+                c_next = int(next_ref_start * (total_c / max(1, total_ref)))
+                f_e = min(T - 1, int(token_frames[min(c_next, total_c - 1)]) + 125)
 
             lp_a = log_probs[f_s:f_e + 1]
             ext_a, path_a, margins_a = engine.forced_align(lp_a, comb_ids_a, blank_id)
             if path_a is None:
-                ext_a, path_a, margins_a = engine.forced_align(log_probs, comb_ids_a, blank_id)
                 f_s = 0
+                f_e = T - 1
+                lp_a = log_probs
+                ext_a, path_a, margins_a = engine.forced_align(lp_a, comb_ids_a, blank_id)
 
             first_seen_a, last_seen_a = frame_spans_from_path(path_a, len(ext_a))
             cues_a = extract_word_frame_spans(slots_adj, first_seen_a, last_seen_a)
@@ -329,6 +340,9 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
                             c["token_spans"] = [(st + f_s if st >= 0 else -1, en + f_s if en >= 0 else -1) for st, en in c["token_spans"]]
                     if ref_start > 0 and "token_positions" in c:
                         c["token_positions"] = [p + ref_start for p in c["token_positions"]]
+
+            if cues_a:
+                last_end_frame = max(c["end_frame"] for c in cues_a)
 
             all_cues.extend(cues_a)
 
