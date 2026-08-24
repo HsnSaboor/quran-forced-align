@@ -317,15 +317,33 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
 
             first_seen_a, last_seen_a = frame_spans_from_path(path_a, len(ext_a))
             cues_a = extract_word_frame_spans(slots_adj, first_seen_a, last_seen_a)
-            t5_s = time.perf_counter()
-            cues_a = detect_and_fix_repeats(
-                engine, cues_a, lp_a, comb_ids_a, blank_id, ext_a, path_a,
-                anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,
-                ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
-                confidence_margin=repeat_confidence_margin,
-                max_repeat_window_words=max_repeat_window_words,
-            )
-            t5_elapsed += (time.perf_counter() - t5_s)
+            
+            # Fast check if repeat detection is needed for this ayah
+            need_repeat_check = False
+            if len(cues_a) >= 2:
+                for k in range(len(cues_a) - 1):
+                    if cues_a[k + 1]["start_frame"] - cues_a[k]["end_frame"] >= 18:
+                        need_repeat_check = True
+                        break
+                if not need_repeat_check:
+                    durs = [c["end_frame"] - c["start_frame"] for c in cues_a]
+                    med = float(np.median(durs)) if durs else 0.0
+                    if med > 0:
+                        for d in durs:
+                            if d < anomaly_low_ratio * med or d > anomaly_high_ratio * med:
+                                need_repeat_check = True
+                                break
+
+            if need_repeat_check:
+                t5_s = time.perf_counter()
+                cues_a = detect_and_fix_repeats(
+                    engine, cues_a, lp_a, comb_ids_a, blank_id, ext_a, path_a,
+                    anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,
+                    ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
+                    confidence_margin=repeat_confidence_margin,
+                    max_repeat_window_words=max_repeat_window_words,
+                )
+                t5_elapsed += (time.perf_counter() - t5_s)
 
             t6_s = time.perf_counter()
             cues_a = flag_low_confidence_words(cues_a, lp_a, ext_a, path_a, margins_a)
