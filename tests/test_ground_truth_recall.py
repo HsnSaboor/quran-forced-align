@@ -255,7 +255,7 @@ def _run_slots(audio_path, slots_ayah, full_comb_ids, tok2id,
 
 def test_surah2_ayah91_three_word_repeat(tokens):
     """Verify that Surah 2 Ayah 91 in Abdel-Mohsen Al-Obeikan recitation
-    recovers the repeated word: ['وَرَآءَهُۥ'].
+    recovers the 3 repeated words: ['وَيَكْفُرُونَ', 'بِمَا', 'وَرَآءَهُۥ'].
     """
     tok2id, id2tok, blank_id, max_token_len = tokens
     from quran_forced_align.reference import build_combined_reference
@@ -266,14 +266,14 @@ def test_surah2_ayah91_three_word_repeat(tokens):
     cues = _run_slots(audio_path, slots_91, full_comb_ids, tok2id)
     repeats = [c for c in cues if c[5]]
     
-    assert len(repeats) == 1, f"expected exactly 1 repeat word in Ayah 91, got {len(repeats)}: {[c[0] for c in repeats]}"
-    expected_words = ["وَرَآءَهُۥ"]
+    assert len(repeats) == 3, f"expected exactly 3 repeat words in Ayah 91, got {len(repeats)}: {[c[0] for c in repeats]}"
+    expected_words = ["وَيَكْفُرُونَ", "بِمَا", "وَرَآءَهُۥ"]
     assert [c[0] for c in repeats] == expected_words, f"mismatch in Ayah 91 repeats: {[c[0] for c in repeats]} vs {expected_words}"
 
 
 def test_surah2_ayah109_four_word_repeat(tokens):
     """Verify that Surah 2 Ayah 109 in Abdel-Mohsen Al-Obeikan recitation
-    is aligned cleanly without spurious repeats.
+    recovers EXACTLY the 4 repeated words: ['مِّنۢ', 'بَعْدِ', 'مَا', 'تَبَيَّنَ'].
     """
     tok2id, id2tok, blank_id, max_token_len = tokens
     from quran_forced_align.reference import build_combined_reference
@@ -284,4 +284,6 @@ def test_surah2_ayah109_four_word_repeat(tokens):
     cues = _run_slots(audio_path, slots_109, full_comb_ids, tok2id)
     repeats = [c for c in cues if c[5]]
     
-    assert len(repeats) == 0, f"expected no spurious repeats in Ayah 109, got {len(repeats)}: {[c[0] for c in repeats]}"
+    assert len(repeats) == 4, f"expected exactly 4 repeat words in Ayah 109, got {len(repeats)}: {[c[0] for c in repeats]}"
+    expected_words = ["مِّنۢ", "بَعْدِ", "مَا", "تَبَيَّنَ"]
+    assert [c[0] for c in repeats] == expected_words, f"mismatch in Ayah 109 repeats: {[c[0] for c in repeats]} vs {expected_words}"
