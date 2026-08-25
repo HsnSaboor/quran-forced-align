@@ -339,7 +339,7 @@ int fast_detect_and_fix_repeats_engine(
     int32_t* last_seen = (int32_t*)malloc(buf_len * sizeof(int32_t));
     int32_t* best_path = (int32_t*)malloc(buf_len * sizeof(int32_t));
 
-    for (int i = 0; i < num_cues; ++i) {
+    for (int i = num_cues - 1; i >= 0; --i) {
         out_K[i] = 0;
         
         if (consumed[i]) continue;
@@ -350,7 +350,11 @@ int fast_detect_and_fix_repeats_engine(
         float high_cutoff = high_ratio * high_mult * (float)median_dur;
         float low_cutoff = low_ratio * (float)median_dur;
         int is_anomalous = (dur < low_cutoff || dur > high_cutoff);
-        if (!is_anomalous) continue;
+        
+        int gap_to_next = (i < num_cues - 1) ? (cue_starts[i + 1] - cue_ends[i] - 1) : 0;
+        int has_pause_gap = (gap_to_next >= (int)median_dur);
+        
+        if (!is_anomalous && !has_pause_gap) continue;
 
         int words_left_in_aya = 1;
         while (i - words_left_in_aya >= 0 && 
@@ -359,6 +363,7 @@ int fast_detect_and_fix_repeats_engine(
             words_left_in_aya++;
         }
         int k_max = words_left_in_aya;
+        if (k_max > 6) k_max = 6;
         if (max_repeat_window_words > 0 && k_max > max_repeat_window_words) {
             k_max = max_repeat_window_words;
         }
@@ -467,29 +472,47 @@ int fast_detect_and_fix_repeats_engine(
             for (int t = copy2_start_local; t <= copy2_end_local; ++t) {
                 sum2 += log_probs[(window_start + t) * V + ext2[path2[t]]];
             }
-            float avg1 = (float)(sum1 / (copy1_end_local - copy1_start_local + 1));
-            float avg2 = (float)(sum2 / (copy2_end_local - copy2_start_local + 1));
-            float bilateral = (K >= 2) ? (float)((sum1 + sum2) / (copy1_dur + copy2_dur)) : (avg1 < avg2 ? avg1 : avg2);
+            float avg1 = (float)(sum1 / copy1_dur);
+            float avg2 = (float)(sum2 / copy2_dur);
+            float bilateral = (avg1 < avg2 ? avg1 : avg2);
             
-            float required_floor = (K >= 3) ? (confidence_floor - 0.50f) : confidence_floor;
-            if (bilateral < required_floor) continue;
-            if (K == 1 && (copy2_start_local - copy1_end_local) > 25) continue;
-            
-            // Direct acoustic verification: verify decoded tokens in copy2 match candidate phrase
-            int copy2_len = copy2_end_local - copy2_start_local + 1;
-            const int32_t* copy2_ids = full_greedy_ids + window_start + copy2_start_local;
-            int decoded_copy2_len = fast_collapse_ctc_ids(copy2_ids, copy2_len, blank_id, decoded_ids);
-            double ratio_copy2 = fast_token_id_levenshtein_ratio(decoded_ids, decoded_copy2_len, phrase_ids, L, 0.0);
-            if (ratio_copy2 < 0.40 && K < 3 && !free_decode_pass) continue;
+            // Per-word bilateral acoustic verification: ensure EVERY individual word is genuinely repeated
+            int word_failed = 0;
+            int tok_acc = 0;
+            for (int j = j0; j <= i; ++j) {
+                int count = cue_token_counts[j];
+                int c1_st = first_seen[2 * tok_acc + 1];
+                int c1_en = last_seen[2 * (tok_acc + count - 1) + 1];
+                int c2_st = first_seen[2 * (L + tok_acc) + 1];
+                int c2_en = last_seen[2 * (L + tok_acc + count - 1) + 1];
+                tok_acc += count;
 
+                int d1 = c1_en - c1_st + 1;
+                int d2 = c2_en - c2_st + 1;
+                if (d1 < 1 || d2 < 1) { word_failed = 1; break; }
+
+                double w_sum1 = 0, w_sum2 = 0;
+                for (int t = c1_st; t <= c1_en; ++t) {
+                    w_sum1 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+                }
+                for (int t = c2_st; t <= c2_en; ++t) {
+                    w_sum2 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+                }
+                float w_avg1 = (float)(w_sum1 / d1);
+                float w_avg2 = (float)(w_sum2 / d2);
+                float w_bilat = (w_avg1 < w_avg2 ? w_avg1 : w_avg2);
+                if (w_bilat < confidence_floor) {
+                    word_failed = 1;
+                    break;
+                }
+            }
+            if (word_failed) continue;
+            
             int gap_frames = copy2_start_local - copy1_end_local;
-            float margin_above_floor = bilateral - required_floor;
+            float margin_above_floor = bilateral - confidence_floor;
             if (gap_frames <= gap_artifact_max_frames && margin_above_floor < gap_artifact_min_margin) continue;
             
-            // If gap is large (e.g. >15 frames = >0.6s pause), it is a distinct restart pause, not a trellis artifact
-            if (!free_decode_pass && K < 3 && gap_frames <= 15 && margin_above_floor < 0.3f) continue;
-            
-            float cand_score = bilateral;
+            float cand_score = bilateral + (float)(ratio_doubled - ratio_single) * 0.1f;
             if (cand_score > best_score) {
                 best_score = cand_score;
                 best_K = K;

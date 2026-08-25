@@ -2,7 +2,9 @@ import numpy as np
 
 from ..confidence import per_word_min_margin
 from ..constants import (
+    DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
     DEFAULT_MAX_REPEAT_WINDOW_WORDS,
+    DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     FREE_DECODE_MIN_MARGIN,
     FREE_DECODE_MIN_RATIO_DOUBLED,
     GAP_ARTIFACT_MAX_FRAMES,
@@ -24,8 +26,8 @@ def detect_and_fix_repeats(
     anomaly_low_ratio,
     anomaly_high_ratio,
     min_word_dur_frames,
-    ayah_final_high_ratio_mult=1.5,
-    confidence_margin=1.0,
+    ayah_final_high_ratio_mult=DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
+    confidence_margin=DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     max_repeat_window_words=None,
     max_passes=1,
 ):
@@ -53,8 +55,7 @@ def detect_and_fix_repeats(
             break
         current_cues = fixed_cues
         
-    # Scan inter-word pause gaps once on converged cues for abandoned/pause restarts
-    return _scan_pause_gap_restarts(current_cues, log_probs, combined_token_ids, blank_id, min_word_dur_frames)
+    return current_cues
 
 
 def _detect_and_fix_repeats_pass(
@@ -68,8 +69,8 @@ def _detect_and_fix_repeats_pass(
     anomaly_low_ratio,
     anomaly_high_ratio,
     min_word_dur_frames,
-    ayah_final_high_ratio_mult=1.5,
-    confidence_margin=1.0,
+    ayah_final_high_ratio_mult=DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
+    confidence_margin=DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     max_repeat_window_words=DEFAULT_MAX_REPEAT_WINDOW_WORDS,
 ):
     low_ratio = anomaly_low_ratio
@@ -286,9 +287,6 @@ def _detect_and_fix_repeats_pass(
     if not cues:
         return cues
 
-    # 1. First Pass: Scan inter-word pause gaps for clean spoken multi-word phrase restarts
-    cues = _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_word_dur_frames)
-
     durations = np.array([c["end_frame"] - c["start_frame"] for c in cues], dtype=np.float64)
     median = float(np.median(durations)) if len(durations) else 0.0
     if median <= 0:
@@ -466,129 +464,4 @@ def _detect_and_fix_repeats_pass(
             
     fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
     
-    return fixed
-
-
-def _scan_pause_gap_restarts(cues, log_probs, combined_token_ids, blank_id, min_word_dur_frames):
-    """Scan inter-word pause gaps >= 1.0s (25 frames) on converged cues for spoken restarts / repeat phrases."""
-    if len(cues) < 2:
-        return cues
-        
-    fixed = list(cues)
-    gap_repeats = []
-    
-    import numpy as np
-    from ..decode import token_id_levenshtein_ratio
-    from ..trellis import build_ext, frame_spans_from_path, avg_logprob_along_path
-    from ..viterbi import ctc_forced_align
-    from ..confidence import per_word_min_margin
-    from .spans import token_frame_spans
-    
-    log_probs_np = log_probs.cpu().numpy() if hasattr(log_probs, "cpu") else log_probs
-    full_greedy_ids = np.argmax(log_probs_np, axis=-1).astype(np.int32)
-    
-    def _shift_token_spans(token_spans, offset):
-        return [(s + offset, e + offset) for s, e in token_spans]
-        
-    def _spliced_gap_cue(orig, start_local, end_local, token_spans_local, window_start, ext2, path2, is_repeat):
-        return {
-            **orig,
-            "start_frame": start_local + window_start,
-            "end_frame": end_local + window_start,
-            "is_repeat": is_repeat,
-            "token_frame_spans": _shift_token_spans(token_spans_local, window_start),
-            "avg_logprob": avg_logprob_along_path(
-                log_probs_np[window_start:window_start + len(path2)], ext2, path2, start_local, end_local
-            ),
-            "min_decision_margin": per_word_min_margin(None, start_local, end_local),
-        }
-
-    for k in range(len(fixed) - 1):
-        c_curr = fixed[k]
-        c_next = fixed[k + 1]
-        if c_curr["aya"] == c_next["aya"] and c_curr["sura"] == c_next["sura"] and k >= 0:
-            gap_start = c_curr["end_frame"] + 1
-            gap_end = c_next["start_frame"] - 1
-            gap_len = gap_end - gap_start + 1
-            if gap_len >= 10:  # Pause gap >= ~0.40s
-                aya_words = [c for c in fixed[:k + 1] if c["aya"] == c_curr["aya"] and c["sura"] == c_curr["sura"]][-6:]
-                best_cand = None
-                
-                from ..decode import fast_ctc_align_c, token_id_levenshtein_ratio
-                
-                gap_greedy = full_greedy_ids[gap_start:gap_end + 1]
-                gap_dec = _collapse_ctc_ids(gap_greedy.tolist(), blank_id)
-                cand_groups = []
-                for w_len in range(min(len(aya_words), 6), 0, -1):
-                    cand_groups.append(aya_words[-w_len:])
-                
-                for phrase_cands in cand_groups:
-                    phrase_tok_ids = []
-                    for c in phrase_cands:
-                        phrase_tok_ids.extend([combined_token_ids[pos] for pos in c.get("token_positions", [])])
-                    if not phrase_tok_ids:
-                        continue
-
-                    n_p = len(phrase_tok_ids)
-                    lp_gap = log_probs_np[gap_start:gap_end + 1]
-                    ext_gap, path_gap, _ = fast_ctc_align_c(lp_gap, phrase_tok_ids, blank_id)
-                    if path_gap is not None:
-                        first_s, last_s = frame_spans_from_path(path_gap, len(ext_gap))
-                        spk_s = first_s[1]
-                        spk_e = last_s[len(ext_gap) - 2]
-                        if spk_s >= 0 and spk_e >= spk_s:
-                            tok_offset = 0
-                            words_valid = True
-                            prev_w_end = -1
-                            word_spans = []
-                            for c in phrase_cands:
-                                nt = len(c.get("token_positions", []))
-                                w_firsts = [first_s[2 * (tok_offset + p) + 1] for p in range(nt)]
-                                w_lasts = [last_s[2 * (tok_offset + p) + 1] for p in range(nt)]
-                                valid_starts = [st for st in w_firsts if st >= 0]
-                                valid_ends = [en for en in w_lasts if en >= 0]
-                                if not valid_starts or not valid_ends:
-                                    words_valid = False
-                                    break
-                                w_s_loc = int(min(valid_starts))
-                                w_e_loc = int(max(valid_ends))
-                                w_dur = w_e_loc - w_s_loc + 1
-                                min_req = 3 if nt <= 2 else (6 if nt == 3 else 8)
-
-                                if w_dur < min_req or w_s_loc <= prev_w_end:
-                                    words_valid = False
-                                    break
-                                prev_w_end = w_e_loc
-                                tok_spans = [(int(st), int(en)) if st >= 0 and en >= 0 else (-1, -1) for st, en in zip(w_firsts, w_lasts)]
-                                word_spans.append((c, w_s_loc, w_e_loc, tok_spans, nt, nt))
-                                tok_offset += nt
-                                
-                            if words_valid and len(word_spans) == len(phrase_cands):
-                                path_lps = lp_gap[np.arange(len(path_gap)), ext_gap[path_gap]]
-                                avg_lp = float(np.mean(path_lps))
-                                if avg_lp >= -2.0:
-                                    best_cand = (phrase_cands, phrase_tok_ids, ext_gap, path_gap, word_spans)
-                                    break  # Longest valid matching phrase selected
-                                
-                if best_cand:
-                    phrase_cands, match_tok_ids, ext_gap, path_gap, word_spans = best_cand
-                    prev_end = gap_start - 1
-                    for cand, s_loc, e_loc, tok_visited, n_part, n_cand in word_spans:
-                        cur_s = s_loc + gap_start
-                        cur_e = e_loc + gap_start
-                        if cur_s <= prev_end:
-                            cur_s = prev_end + 1
-                        if cur_e < cur_s + int(min_word_dur_frames) - 1:
-                            cur_e = cur_s + int(min_word_dur_frames) - 1
-                        prev_end = cur_e
-                        rep_cue = _spliced_gap_cue(
-                            cand, s_loc, e_loc, tok_visited, gap_start, ext_gap, path_gap, is_repeat=True
-                        )
-                        rep_cue["start_frame"] = cur_s
-                        rep_cue["end_frame"] = cur_e
-                        gap_repeats.append(rep_cue)
-    if gap_repeats:
-        fixed.extend(gap_repeats)
-        fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
-        
     return fixed

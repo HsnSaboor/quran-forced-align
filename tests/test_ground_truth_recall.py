@@ -249,6 +249,8 @@ def _run_slots(audio_path, slots_ayah, full_comb_ids, tok2id,
         anomaly_low_ratio=anomaly_low_ratio,
         anomaly_high_ratio=anomaly_high_ratio,
         min_word_dur_frames=min_word_dur_frames,
+        ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
+        confidence_margin=confidence_margin,
     )
     return cues_to_tuples(cues2, seconds_per_frame)
 
