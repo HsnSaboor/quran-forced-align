@@ -475,6 +475,7 @@ int fast_detect_and_fix_repeats_engine(
             float avg1 = (float)(sum1 / copy1_dur);
             float avg2 = (float)(sum2 / copy2_dur);
             float bilateral = (avg1 < avg2 ? avg1 : avg2);
+            if (bilateral < confidence_floor) continue;
             
             // Per-word bilateral acoustic verification: ensure EVERY individual word is genuinely repeated
             int word_failed = 0;
@@ -501,7 +502,7 @@ int fast_detect_and_fix_repeats_engine(
                 float w_avg1 = (float)(w_sum1 / d1);
                 float w_avg2 = (float)(w_sum2 / d2);
                 float w_bilat = (w_avg1 < w_avg2 ? w_avg1 : w_avg2);
-                if (w_bilat < confidence_floor) {
+                if (w_bilat < confidence_floor - 0.75f) {
                     word_failed = 1;
                     break;
                 }
