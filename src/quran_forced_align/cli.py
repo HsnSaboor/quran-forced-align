@@ -41,6 +41,19 @@ def parse_istiaatha_choice(val: str | bool) -> str | bool:
     raise argparse.ArgumentTypeError(f"Invalid --include-istiaatha choice: '{val}'. Use auto, yes, or no.")
 
 
+def parse_bismillah_choice(val: str | bool) -> str | bool:
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in ("auto", "default", "none"):
+        return "auto"
+    if s in ("yes", "true", "1", "y"):
+        return True
+    if s in ("no", "false", "0", "n"):
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid --include-bismillah choice: '{val}'. Use auto, yes, or no.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="quran-forced-align",
@@ -63,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Enable parallel intra-surah GPU streaming. Enabled automatically on CUDA by default.")
     ap.add_argument("--include-istiaatha", type=parse_istiaatha_choice, default="auto",
                     help="Include Isti'adha preamble in reference ('auto', 'yes', or 'no'). Default: 'auto'.")
+    ap.add_argument("--include-bismillah", type=parse_bismillah_choice, default="auto",
+                    help="Include Bismillah preamble in reference ('auto', 'yes', or 'no'). Default: 'auto'.")
     add_tuning_args(ap)
     return ap
 
@@ -107,6 +122,7 @@ def main():
         device=device,
         intra_surah_split=intra_surah_split,
         include_istiaatha=args.include_istiaatha,
+        include_bismillah=args.include_bismillah,
         anomaly_low_ratio=args.anomaly_low_ratio,
         anomaly_high_ratio=args.anomaly_high_ratio,
         ayah_final_high_ratio_mult=args.ayah_final_high_ratio_mult,

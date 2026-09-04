@@ -60,6 +60,7 @@ def extract_word_frame_spans(word_slots, first_seen, last_seen):
             "word": slot["word"],
             "sura": slot["sura"],
             "aya": slot["aya"],
+            "word_idx": slot.get("word_idx"),
             "is_ayah_final": slot["is_ayah_final"],
             "start_frame": w_start,
             "end_frame": w_end,

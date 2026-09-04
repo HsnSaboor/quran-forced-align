@@ -1,0 +1,1382 @@
+{
+  "mansour-al-salmi": {
+    "2": {
+      "13": [
+        {
+          "type": "repeat",
+          "words": [
+            8
+          ],
+          "phrase": "قَالُوٓا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "17": [
+        {
+          "type": "repeat",
+          "words": [
+            10,
+            11,
+            12
+          ],
+          "phrase": "ذَهَبَ ٱللَّهُ بِنُورِهِمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "23": [
+        {
+          "type": "repeat",
+          "words": [
+            13,
+            14
+          ],
+          "phrase": "وَٱدْعُوا۟ شُهَدَآءَكُم",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "24": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7
+          ],
+          "phrase": "فَٱتَّقُوا۟ ٱلنَّارَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "25": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            8,
+            19
+          ],
+          "phrase": "أَنَّ لَهُمْ جَنَّـٰتٍۢ قَالُوا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "27": [
+        {
+          "type": "repeat",
+          "words": [
+            8
+          ],
+          "phrase": "وَيَقْطَعُونَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "29": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "phrase": "ثُمَّ ٱسْتَوَىٰٓ إِلَى ٱلسَّمَآءِ فَسَوَّىٰهُنَّ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "30": [
+        {
+          "type": "repeat",
+          "words": [
+            16,
+            17
+          ],
+          "phrase": "وَيَسْفِكُ ٱلدِّمَآءَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "31": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10
+          ],
+          "phrase": "فَقَالَ أَنۢبِـُٔونِى",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "34": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9
+          ],
+          "phrase": "إِلَّآ إِبْلِيسَ أَبَىٰ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "38": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10,
+            11
+          ],
+          "phrase": "فَمَن تَبِعَ هُدَاىَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "40": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9
+          ],
+          "phrase": "وَأَوْفُوا۟ بِعَهْدِىٓ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "51": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            8
+          ],
+          "phrase": "ثُمَّ ٱتَّخَذْتُمُ ٱلْعِجْلَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "54": [
+        {
+          "type": "repeat",
+          "words": [
+            11
+          ],
+          "phrase": "فَتُوبُوٓا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "58": [
+        {
+          "type": "repeat",
+          "words": [
+            11,
+            12,
+            13
+          ],
+          "phrase": "وَٱدْخُلُوا۟ ٱلْبَابَ سُجَّدًۭا",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "61": [
+        {
+          "type": "repeat",
+          "words": [
+            17,
+            18,
+            19
+          ],
+          "phrase": "مِنۢ بَقْلِهَا وَقِثَّآئِهَا",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "63": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9,
+            10
+          ],
+          "phrase": "خُذُوا۟ مَآ ءَاتَيْنَـٰكُم بِقُوَّةٍۢ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "75": [
+        {
+          "type": "repeat",
+          "words": [
+            12,
+            13
+          ],
+          "phrase": "ثُمَّ يُحَرِّفُونَهُۥ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "81": [
+        {
+          "type": "repeat",
+          "words": [
+            8
+          ],
+          "phrase": "فَأُو۟لَـٰٓئِكَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "83": [
+        {
+          "type": "repeat",
+          "words": [
+            10,
+            11,
+            16,
+            17,
+            18,
+            23,
+            24,
+            25,
+            26,
+            27
+          ],
+          "phrase": "وَبِٱلْوَٰلِدَيْنِ إِحْسَانًۭا وَقُولُوا۟ لِلنَّاسِ حُسْنًۭا ثُمَّ تَوَلَّيْتُمْ إِلَّا قَلِيلًۭا مِّنكُمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "84": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9,
+            10
+          ],
+          "phrase": "وَلَا تُخْرِجُونَ أَنفُسَكُم مِّن",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "85": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            11,
+            12
+          ],
+          "phrase": "وَتُخْرِجُونَ فَرِيقًۭا تَظَـٰهَرُونَ عَلَيْهِم",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "90": [
+        {
+          "type": "repeat",
+          "words": [
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "phrase": "أَن يُنَزِّلَ ٱللَّهُ مِن فَضْلِهِۦ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "91": [
+        {
+          "type": "repeat",
+          "words": [
+            8
+          ],
+          "phrase": "قَالُوا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "94": [
+        {
+          "type": "repeat",
+          "words": [
+            13,
+            14
+          ],
+          "phrase": "فَتَمَنَّوُا۟ ٱلْمَوْتَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "97": [
+        {
+          "type": "repeat",
+          "words": [
+            12,
+            13,
+            14,
+            15
+          ],
+          "phrase": "مُصَدِّقًۭا لِّمَا بَيْنَ يَدَيْهِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "101": [
+        {
+          "type": "repeat",
+          "words": [
+            10,
+            11
+          ],
+          "phrase": "نَبَذَ فَرِيقٌۭ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "109": [
+        {
+          "type": "repeat",
+          "words": [
+            11,
+            12
+          ],
+          "phrase": "كُفَّارًا حَسَدًۭا",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "112": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9,
+            10,
+            11
+          ],
+          "phrase": "فَلَهُۥٓ أَجْرُهُۥ عِندَ رَبِّهِۦ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "125": [
+        {
+          "type": "repeat",
+          "words": [
+            16,
+            17,
+            18
+          ],
+          "phrase": "أَن طَهِّرَا بَيْتِىَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "126": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10
+          ],
+          "phrase": "وَٱرْزُقْ أَهْلَهُۥ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "127": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9,
+            10
+          ],
+          "phrase": "رَبَّنَا تَقَبَّلْ مِنَّآ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "129": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            8
+          ],
+          "phrase": "يَتْلُوا۟ عَلَيْهِمْ ءَايَـٰتِكَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "132": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "phrase": "إِنَّ ٱللَّهَ ٱصْطَفَىٰ لَكُمُ ٱلدِّينَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "136": [
+        {
+          "type": "repeat",
+          "words": [
+            14
+          ],
+          "phrase": "وَٱلْأَسْبَاطِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "151": [
+        {
+          "type": "repeat",
+          "words": [
+            9
+          ],
+          "phrase": "وَيُزَكِّيكُمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "155": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            8
+          ],
+          "phrase": "وَنَقْصٍۢ مِّنَ ٱلْأَمْوَٰلِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "156": [
+        {
+          "type": "repeat",
+          "words": [
+            5
+          ],
+          "phrase": "قَالُوٓا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "159": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "phrase": "مِنۢ بَعْدِ مَا بَيَّنَّـٰهُ لِلنَّاسِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "160": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            8
+          ],
+          "phrase": "فَأُو۟لَـٰٓئِكَ أَتُوبُ عَلَيْهِمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "164": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            8
+          ],
+          "phrase": "وَٱخْتِلَـٰفِ ٱلَّيْلِ وَٱلنَّهَارِ",
+          "start_ms": null,
+          "end_ms": null
+        },
+        {
+          "type": "repeat",
+          "words": [
+            17,
+            18,
+            19
+          ],
+          "phrase": "وَمَآ أَنزَلَ ٱللَّهُ",
+          "start_ms": null,
+          "end_ms": null
+        },
+        {
+          "type": "repeat",
+          "words": [
+            34,
+            35
+          ],
+          "phrase": "وَتَصْرِيفِ ٱلرِّيَـٰحِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "169": [
+        {
+          "type": "repeat",
+          "words": [
+            5,
+            6
+          ],
+          "phrase": "وَأَن تَقُولُوا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "170": [
+        {
+          "type": "repeat",
+          "words": [
+            8
+          ],
+          "phrase": "قَالُوا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "172": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10
+          ],
+          "phrase": "وَٱشْكُرُوا۟ لِلَّهِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "174": [
+        {
+          "type": "repeat",
+          "words": [
+            13
+          ],
+          "phrase": "أُو۟لَـٰٓئِكَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "188": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7,
+            8,
+            9
+          ],
+          "phrase": "وَتُدْلُوا۟ بِهَآ إِلَى ٱلْحُكَّامِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "196": [
+        {
+          "type": "repeat",
+          "words": [
+            27,
+            28,
+            29
+          ],
+          "phrase": "فَفِدْيَةٌۭ مِّن صِيَامٍ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "213": [
+        {
+          "type": "repeat",
+          "words": [
+            10,
+            11,
+            12
+          ],
+          "phrase": "وَأَنزَلَ مَعَهُمُ ٱلْكِتَـٰبَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "214": [
+        {
+          "type": "repeat",
+          "words": [
+            17,
+            18,
+            19,
+            20,
+            21
+          ],
+          "phrase": "حَتَّىٰ يَقُولَ ٱلرَّسُولُ وَٱلَّذِينَ ءَامَنُوا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "228": [
+        {
+          "type": "repeat",
+          "words": [
+            16,
+            17,
+            18,
+            19
+          ],
+          "phrase": "إِن كُنَّ يُؤْمِنَّ بِٱللَّهِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "230": [
+        {
+          "type": "repeat",
+          "words": [
+            14,
+            15,
+            16,
+            17,
+            18
+          ],
+          "phrase": "فَلَا جُنَاحَ عَلَيْهِمَآ أَن يَتَرَاجَعَآ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "249": [
+        {
+          "type": "repeat",
+          "words": [
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "phrase": "وَمَن لَّمْ يَطْعَمْهُ فَإِنَّهُۥ مِنِّىٓ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "250": [
+        {
+          "type": "repeat",
+          "words": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "phrase": "قَالُوا۟ رَبَّنَآ أَفْرِغْ عَلَيْنَا صَبْرًۭا",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "253": [
+        {
+          "type": "repeat",
+          "words": [
+            31,
+            32,
+            33,
+            34
+          ],
+          "phrase": "بَعْدِ مَا جَآءَتْهُمُ ٱلْبَيِّنَـٰتُ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "261": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9
+          ],
+          "phrase": "كَمَثَلِ حَبَّةٍ",
+          "start_ms": 7366940,
+          "end_ms": 7368780
+        }
+      ],
+      "262": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ],
+          "phrase": "ثُمَّ لَا يُتْبِعُونَ مَآ أَنفَقُوا۟ مَنًّۭا",
+          "start_ms": 7406920,
+          "end_ms": 7414560
+        },
+        {
+          "type": "repeat",
+          "words": [
+            15,
+            16,
+            17,
+            18
+          ],
+          "phrase": "لَّهُمْ أَجْرُهُمْ عِندَ رَبِّهِمْ",
+          "start_ms": 7422120,
+          "end_ms": 7426400
+        }
+      ],
+      "266": [
+        {
+          "type": "repeat",
+          "words": [
+            10,
+            11,
+            12,
+            13
+          ],
+          "phrase": "تَجْرِى مِن تَحْتِهَا ٱلْأَنْهَـٰرُ",
+          "start_ms": 7565320,
+          "end_ms": 7569480
+        },
+        {
+          "type": "repeat",
+          "words": [
+            14,
+            15,
+            16,
+            17,
+            18
+          ],
+          "phrase": "لَهُۥ فِيهَا مِن كُلِّ ٱلثَّمَرَٰتِ",
+          "start_ms": 7575520,
+          "end_ms": 7579560
+        },
+        {
+          "type": "repeat",
+          "words": [
+            21,
+            22,
+            23
+          ],
+          "phrase": "وَلَهُۥ ذُرِّيَّةٌۭ ضُعَفَآءُ",
+          "start_ms": 7588200,
+          "end_ms": 7594080
+        }
+      ],
+      "273": [
+        {
+          "type": "repeat",
+          "words": [
+            12,
+            13,
+            14
+          ],
+          "phrase": "يَحْسَبُهُمُ ٱلْجَاهِلُ أَغْنِيَآءَ",
+          "start_ms": 7814080,
+          "end_ms": 7819440
+        },
+        {
+          "type": "repeat",
+          "words": [
+            17,
+            18
+          ],
+          "phrase": "تَعْرِفُهُم بِسِيمَـٰهُمْ",
+          "start_ms": 7825440,
+          "end_ms": 7828560
+        }
+      ],
+      "281": [
+        {
+          "type": "repeat",
+          "words": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "phrase": "وَٱتَّقُوا۟ يَوْمًۭا تُرْجَعُونَ فِيهِ إِلَى ٱللَّهِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "177": [
+        {
+          "type": "repeat",
+          "words": [
+            16
+          ],
+          "phrase": "وَٱلْمَلَـٰٓئِكَةِ",
+          "start_ms": 4340360,
+          "end_ms": 4343680
+        },
+        {
+          "type": "repeat",
+          "words": [
+            26,
+            27,
+            28
+          ],
+          "phrase": "وَٱلْمَسَـٰكِينَ وَٱبْنَ ٱلسَّبِيلِ",
+          "start_ms": 4357820,
+          "end_ms": 4360580
+        },
+        {
+          "type": "repeat",
+          "words": [
+            32,
+            33,
+            34,
+            35
+          ],
+          "phrase": "وَأَقَامَ ٱلصَّلَوٰةَ وَءَاتَى ٱلزَّكَوٰةَ",
+          "start_ms": 4371580,
+          "end_ms": 4374940
+        }
+      ],
+      "183": [
+        {
+          "type": "repeat",
+          "words": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "phrase": "يَـٰٓأَيُّهَا ٱلَّذِينَ ءَامَنُوا۟ كُتِبَ عَلَيْكُمُ ٱلصِّيَامُ",
+          "start_ms": 4530640,
+          "end_ms": 4537480
+        }
+      ],
+      "185": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8
+          ],
+          "phrase": "هُدًۭى لِّلنَّاسِ",
+          "start_ms": 4603600,
+          "end_ms": 4605940
+        }
+      ],
+      "204": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "phrase": "وَيُشْهِدُ ٱللَّهَ عَلَىٰ مَا فِى قَلْبِهِۦ",
+          "start_ms": 5213800,
+          "end_ms": 5217800
+        }
+      ],
+      "209": [
+        {
+          "type": "repeat",
+          "words": [
+            8
+          ],
+          "phrase": "فَٱعْلَمُوٓا۟",
+          "start_ms": 5302760,
+          "end_ms": 5305400
+        }
+      ],
+      "217": [
+        {
+          "type": "repeat",
+          "words": [
+            46
+          ],
+          "phrase": "فَأُو۟لَـٰٓئِكَ",
+          "start_ms": 5614760,
+          "end_ms": 5618000
+        }
+      ],
+      "218": [
+        {
+          "type": "repeat",
+          "words": [
+            10
+          ],
+          "phrase": "أُو۟لَـٰٓئِكَ",
+          "start_ms": 5645760,
+          "end_ms": 5648480
+        }
+      ],
+      "229": [
+        {
+          "type": "repeat",
+          "words": [
+            16,
+            17,
+            18
+          ],
+          "phrase": "إِلَّآ أَن يَخَافَآ",
+          "start_ms": 6001780,
+          "end_ms": 6007500
+        },
+        {
+          "type": "repeat",
+          "words": [
+            29,
+            30,
+            31
+          ],
+          "phrase": "فَلَا جُنَاحَ عَلَيْهِمَا",
+          "start_ms": 6020240,
+          "end_ms": 6023400
+        }
+      ],
+      "234": [
+        {
+          "type": "repeat",
+          "words": [
+            14,
+            15,
+            16
+          ],
+          "phrase": "فَلَا جُنَاحَ عَلَيْكُمْ",
+          "start_ms": 6312820,
+          "end_ms": 6315100
+        }
+      ],
+      "235": [
+        {
+          "type": "repeat",
+          "words": [
+            22,
+            23,
+            24
+          ],
+          "phrase": "إِلَّآ أَن تَقُولُوا۟",
+          "start_ms": 6363220,
+          "end_ms": 6367660
+        }
+      ],
+      "237": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9,
+            10
+          ],
+          "phrase": "وَقَدْ فَرَضْتُمْ لَهُنَّ فَرِيضَةًۭ",
+          "start_ms": 6445980,
+          "end_ms": 6451020
+        },
+        {
+          "type": "repeat",
+          "words": [
+            14,
+            15,
+            16
+          ],
+          "phrase": "إِلَّآ أَن يَعْفُونَ",
+          "start_ms": 6458220,
+          "end_ms": 6463620
+        }
+      ],
+      "240": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7
+          ],
+          "phrase": "وَصِيَّةًۭ لِّأَزْوَٰجِهِم",
+          "start_ms": 6529300,
+          "end_ms": 6531900
+        }
+      ],
+      "265": [
+        {
+          "type": "repeat",
+          "words": [
+            11,
+            12,
+            13
+          ],
+          "phrase": "كَمَثَلِ جَنَّةٍۭ بِرَبْوَةٍ",
+          "start_ms": 7522640,
+          "end_ms": 7526560
+        },
+        {
+          "type": "repeat",
+          "words": [
+            16,
+            17,
+            18
+          ],
+          "phrase": "فَـَٔاتَتْ أُكُلَهَا ضِعْفَيْنِ",
+          "start_ms": 7534240,
+          "end_ms": 7537080
+        }
+      ],
+      "246": [
+        {
+          "type": "repeat",
+          "words": [
+            11,
+            12,
+            13,
+            14
+          ],
+          "phrase": "إِذْ قَالُوا۟ لِنَبِىٍّۢ لَّهُمُ",
+          "start_ms": 6658880,
+          "end_ms": 6661840
+        }
+      ],
+      "232": [
+        {
+          "type": "repeat",
+          "words": [
+            6,
+            7
+          ],
+          "phrase": "فَلَا تَعْضُلُوهُنَّ",
+          "start_ms": 6163080,
+          "end_ms": 6166040
+        }
+      ],
+      "243": [
+        {
+          "type": "repeat",
+          "words": [
+            12,
+            13,
+            14,
+            15
+          ],
+          "phrase": "فَقَالَ لَهُمُ ٱللَّهُ مُوتُوا۟",
+          "start_ms": 6588720,
+          "end_ms": 6591760
+        }
+      ],
+      "248": [
+        {
+          "type": "repeat",
+          "words": [
+            14
+          ],
+          "phrase": "وَبَقِيَّةٌۭ",
+          "start_ms": 6776160,
+          "end_ms": 6777600
+        }
+      ],
+      "267": [
+        {
+          "type": "repeat",
+          "words": [
+            19,
+            20
+          ],
+          "phrase": "وَلَسْتُم بِـَٔاخِذِيهِ",
+          "start_ms": 7643120,
+          "end_ms": 7646040
+        }
+      ],
+      "274": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9
+          ],
+          "phrase": "فَلَهُمْ أَجْرُهُمْ",
+          "start_ms": 7860440,
+          "end_ms": 7862160
+        }
+      ],
+      "277": [
+        {
+          "type": "repeat",
+          "words": [
+            10,
+            11,
+            12,
+            13
+          ],
+          "phrase": "لَهُمْ أَجْرُهُمْ عِندَ رَبِّهِمْ",
+          "start_ms": 7957080,
+          "end_ms": 7961480
+        }
+      ]
+    },
+    "3": {
+      "14": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9
+          ],
+          "phrase": "وَٱلْقَنَـٰطِيرِ ٱلْمُقَنطَرَةِ",
+          "start_ms": 287200,
+          "end_ms": 291160
+        }
+      ],
+      "16": [
+        {
+          "type": "repeat",
+          "words": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "phrase": "ءَامَنَّا فَٱغْفِرْ لَنَا ذُنُوبَنَا وَقِنَا عَذَابَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "30": [
+        {
+          "type": "repeat",
+          "words": [
+            10,
+            11,
+            12,
+            13
+          ],
+          "phrase": "وَمَا عَمِلَتْ مِن سُوٓءٍۢ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "39": [
+        {
+          "type": "repeat",
+          "words": [
+            12,
+            13,
+            14,
+            15
+          ],
+          "phrase": "مُصَدِّقًۢا بِكَلِمَةٍۢ مِّنَ ٱللَّهِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "61": [
+        {
+          "type": "repeat",
+          "words": [
+            16,
+            17
+          ],
+          "phrase": "وَنِسَآءَكُمْ وَأَنفُسَنَا",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "65": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10
+          ],
+          "phrase": "ٱلتَّوْرَىٰةُ وَٱلْإِنجِيلُ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "72": [
+        {
+          "type": "repeat",
+          "words": [
+            9,
+            10,
+            11,
+            12
+          ],
+          "phrase": "عَلَى ٱلَّذِينَ ءَامَنُوا۟ وَجْهَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "73": [
+        {
+          "type": "repeat",
+          "words": [
+            19
+          ],
+          "phrase": "يُحَآجُّوكُمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "84": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9
+          ],
+          "phrase": "وَمَآ أُنزِلَ عَلَىٰٓ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "87": [
+        {
+          "type": "repeat",
+          "words": [
+            7
+          ],
+          "phrase": "وَٱلْمَلَـٰٓئِكَةِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "99": [
+        {
+          "type": "repeat",
+          "words": [
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "phrase": "لِمَ تَصُدُّونَ عَن سَبِيلِ ٱللَّهِ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "117": [
+        {
+          "type": "repeat",
+          "words": [
+            12,
+            13,
+            14,
+            15,
+            16
+          ],
+          "phrase": "أَصَابَتْ حَرْثَ قَوْمٍۢ ظَلَمُوٓا۟ أَنفُسَهُمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "118": [
+        {
+          "type": "repeat",
+          "words": [
+            18,
+            19
+          ],
+          "phrase": "مِنْ أَفْوَٰهِهِمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "135": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9
+          ],
+          "phrase": "ذَكَرُوا۟ ٱللَّهَ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "153": [
+        {
+          "type": "repeat",
+          "words": [
+            7,
+            8,
+            9,
+            10
+          ],
+          "phrase": "وَٱلرَّسُولُ يَدْعُوكُمْ فِىٓ أُخْرَىٰكُمْ",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "179": [
+        {
+          "type": "repeat",
+          "words": [
+            31,
+            32,
+            33
+          ],
+          "phrase": "وَإِن تُؤْمِنُوا۟ وَتَتَّقُوا۟",
+          "start_ms": null,
+          "end_ms": null
+        }
+      ],
+      "199": [
+        {
+          "type": "repeat",
+          "words": [
+            8,
+            9,
+            10
+          ],
+          "phrase": "وَمَآ أُنزِلَ إِلَيْكُمْ",
+          "start_ms": 4754760,
+          "end_ms": 4763100
+        }
+      ]
+    }
+  }
+}

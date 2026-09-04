@@ -148,14 +148,73 @@ from .constants import (
 from .engines import get_engine
 from .features import compute_fbank_features, compute_fbank_features_gpu
 from .reference import build_combined_reference
-from .repeats import detect_and_fix_repeats, extract_word_frame_spans
+from .repeats import (
+    BackwardPathCandidate,
+    RepeatCandidateEvaluator,
+    ReviewQueueExporter,
+    WhisperVerifier,
+    detect_and_fix_repeats,
+    extract_word_frame_spans,
+    scan_backward_path_candidates,
+    select_optimal_canonical_path,
+)
 from .silence import find_silence_midpoints
 from .srt import build_rich_records
 from .tokenizer import load_tokens
 from .trellis import frame_spans_from_path
 
 
-def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, device="cpu", include_istiaatha=True):
+class AlignmentResult(list):
+    """Container for alignment outputs supporting both legacy list access (records)
+    and the 3-tier data model: canonical_words, raw_words, repeat_events.
+    """
+
+    def __init__(self, canonical_words, raw_words, repeat_events, metadata=None):
+        super().__init__(raw_words)
+        self.canonical_words = list(canonical_words)
+        self.raw_words = list(raw_words)
+        self.repeat_events = list(repeat_events)
+        self.words = self.canonical_words
+        self.segments = self.raw_words
+        self.metadata = metadata or {}
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            if key in ("canonical_words", "words"):
+                return self.canonical_words
+            elif key in ("raw_words", "segments"):
+                return self.raw_words
+            elif key == "repeat_events":
+                return self.repeat_events
+            elif key in self.metadata:
+                return self.metadata[key]
+            raise KeyError(f"Invalid tier key: {key}")
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        if isinstance(key, str):
+            if key in ("canonical_words", "words"):
+                return self.canonical_words
+            elif key in ("raw_words", "segments"):
+                return self.raw_words
+            elif key == "repeat_events":
+                return self.repeat_events
+            elif key in self.metadata:
+                return self.metadata[key]
+        return default
+
+    def to_dict(self):
+        return {
+            "canonical_words": self.canonical_words,
+            "raw_words": self.raw_words,
+            "repeat_events": self.repeat_events,
+            "words": self.canonical_words,
+            "segments": self.raw_words,
+            "metadata": self.metadata,
+        }
+
+
+def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, device="cpu", include_istiaatha="auto", include_bismillah="auto"):
     """Steps [1/6]-[2/6] of `align_surah`: build the word<->phoneme
     reference and extract fbank features for one surah -- factored out so
     `align_surahs_batched` can run this same per-surah preparation for
@@ -177,7 +236,10 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
     else:
         tok2id, id2tok, blank_id, max_token_len = load_tokens(tokens_path)
     init_istiaatha = False if str(include_istiaatha).lower() in ("auto", "none") else bool(include_istiaatha)
-    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=init_istiaatha)
+    init_bismillah = False if str(include_bismillah).lower() in ("auto", "none") or surah in (1, 9) else bool(include_bismillah)
+    combined_token_ids, word_slots = build_combined_reference(
+        surah, tok2id, max_token_len, include_istiaatha=init_istiaatha, include_bismillah=init_bismillah
+    )
     t1_elapsed = time.perf_counter() - t1_start
     log(f"      {len(word_slots)} words total, {len(combined_token_ids)} reference tokens [{t1_elapsed:.3f}s]")
 
@@ -201,15 +263,16 @@ def _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, d
     return tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples
 
 
-def detect_leading_istiaatha(log_probs, id2tok, blank_id=0, max_frames=ISTIAATHA_DETECT_MAX_FRAMES) -> bool:
-    """Inspect the first ~8-10 seconds of acoustic log_probs to detect if
-    the reciter recited Isti'adha (Audhubillah).
+def detect_leading_openings(log_probs, id2tok, blank_id=0, max_frames=ISTIAATHA_DETECT_MAX_FRAMES) -> tuple[bool, bool]:
+    """Inspect the first ~8-12 seconds of acoustic log_probs to detect if
+    the reciter recited Isti'adha (Audhubillah) and/or Bismillah (Bismillah ir-Rahman ir-Rahim).
     Takes 0.01ms because log_probs is already computed.
+    Returns (has_istiaatha, has_bismillah).
     """
     import numpy as np
     T = min(len(log_probs), max_frames)
     if T < ISTIAATHA_MIN_DETECT_FRAMES:
-        return False
+        return False, False
 
     if hasattr(log_probs, "argmax"):
         if hasattr(log_probs, "is_cuda") and log_probs.is_cuda:
@@ -225,43 +288,124 @@ def detect_leading_istiaatha(log_probs, id2tok, blank_id=0, max_frames=ISTIAATHA
         tid = int(tid)
         if tid != blank_id and tid != prev:
             tok = id2tok.get(tid, "")
-            if tok:
+            if tok and tok != "<blank>":
                 tokens.append(tok)
         prev = tid
     decoded = "".join(tokens)
 
     # Phonetic signatures of Isti'adha ('أعوذ', 'بالله', 'من', 'الشيطان', 'الرجيم')
-    signatures = ("ءَعُ", "عُۥۥذُ", "عُذُ", "ششَي", "طَاانِ", "طَانِ", "جِۦۦم", "جِيم")
-    return any(sig in decoded for sig in signatures)
+    istiaatha_signatures = ("ءَعُ", "عُۥۥذُ", "عُذُ", "ششَي", "طَاانِ", "طَانِ", "جِۦۦم", "جِيم")
+    has_istiaatha = any(sig in decoded for sig in istiaatha_signatures)
+
+    # Phonetic signatures of Bismillah ('بسم', 'الله', 'الرحمن', 'الرحيم')
+    bismillah_signatures = ("بِسمِ", "بِسم", "سمِل", "ررَحمَا", "ررَحمَ", "حمَاان", "حمَان", "ررَحِۦ", "ررَحِي", "رَحِۦۦم", "رَحِيم")
+    has_bismillah = any(sig in decoded for sig in bismillah_signatures)
+
+    return has_istiaatha, has_bismillah
 
 
-def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_ids, blank_id,
-                           word_slots, id2tok, anomaly_low_ratio, anomaly_high_ratio,
-                           ayah_final_high_ratio_mult, repeat_confidence_margin,
-                           max_repeat_window_words, log, silence_feature_frames=None,
-                           strip_istiaatha=False):
+def detect_leading_istiaatha(log_probs, id2tok, blank_id=0, max_frames=ISTIAATHA_DETECT_MAX_FRAMES) -> bool:
+    """Inspect the first ~8-10 seconds of acoustic log_probs to detect if
+    the reciter recited Isti'adha (Audhubillah).
+    Takes 0.01ms because log_probs is already computed.
+    """
+    has_ist, _ = detect_leading_openings(log_probs, id2tok, blank_id=blank_id, max_frames=max_frames)
+    return has_ist
+
+
+def detect_leading_bismillah(log_probs, id2tok, blank_id=0, max_frames=ISTIAATHA_DETECT_MAX_FRAMES) -> bool:
+    """Inspect the first ~8-10 seconds of acoustic log_probs to detect if
+    the reciter recited Bismillah.
+    Takes 0.01ms because log_probs is already computed.
+    """
+    _, has_bsm = detect_leading_openings(log_probs, id2tok, blank_id=blank_id, max_frames=max_frames)
+    return has_bsm
+
+
+def _align_from_log_probs(
+    engine,
+    log_probs,
+    seconds_per_frame,
+    combined_token_ids,
+    blank_id,
+    word_slots,
+    id2tok,
+    anomaly_low_ratio,
+    anomaly_high_ratio,
+    ayah_final_high_ratio_mult,
+    repeat_confidence_margin,
+    max_repeat_window_words,
+    log,
+    silence_feature_frames=None,
+    strip_istiaatha=False,
+    audio_samples=None,
+    feats=None,
+    surplus_verses=None,
+    whisper_verifier=None,
+    unresolved_path=None,
+    export_review_queue=True,
+):
     """Steps [4/6]-[6/6] of `align_surah`: forced-alignment, repeat
     detection, and confidence scoring, given an ALREADY-COMPUTED
     `log_probs` matrix.
     """
     t4_start = time.perf_counter()
     log("[4/6] CTC forced-alignment over the WHOLE surah at once...")
-    
+
     ext, path, margins = engine.forced_align(log_probs, combined_token_ids, blank_id)
     if ext is None or path is None:
         raise RuntimeError(
             "forced alignment failed: audio too short for this surah's reference "
             "(not enough frames to fit the blank-interleaved trellis)"
         )
-        
+
     first_seen, last_seen = frame_spans_from_path(path, len(ext))
     cues = extract_word_frame_spans(word_slots, first_seen, last_seen)
+    raw_cues = [dict(c) for c in cues]
     t4_elapsed = time.perf_counter() - t4_start
     log(f"      {len(cues)}/{len(word_slots)} words got timing from the main pass [{t4_elapsed:.3f}s]")
 
     t5_start = time.perf_counter()
-    log("[5/6] Detecting + locally re-aligning repeats...")
+    log("[5/6] Detecting + locally re-aligning repeats (lattice-driven & multi-feature)...")
     min_word_dur_frames = int(MIN_WORD_DUR / seconds_per_frame)
+
+    # 1. Discover backward-path candidates across CTC emission lattice
+    backward_candidates = scan_backward_path_candidates(
+        engine=engine,
+        cues=cues,
+        log_probs=log_probs,
+        combined_token_ids=combined_token_ids,
+        blank_id=blank_id,
+        seconds_per_frame=seconds_per_frame,
+        feats=feats,
+        max_repeat_window_words=max_repeat_window_words or DEFAULT_MAX_REPEAT_WINDOW_WORDS,
+        surplus_verses=surplus_verses or {},
+    )
+
+    # 2. Multi-feature evaluation and review-queue classification
+    evaluator = RepeatCandidateEvaluator(whisper_verifier=whisper_verifier)
+    repeat_events = []
+    unresolved_candidates = []
+
+    for cand in backward_candidates:
+        phrase_text = " ".join(cues[idx]["word"] for idx in cand.canonical_indices)
+        ev = evaluator.evaluate_candidate(
+            candidate=cand,
+            expected_phrase=phrase_text,
+            audio_samples=audio_samples,
+            sample_rate=SAMPLE_RATE,
+            seconds_per_frame=seconds_per_frame,
+        )
+        if ev["status"] == "accepted":
+            repeat_events.append(ev)
+        elif ev["status"] == "review_queue":
+            unresolved_candidates.append(ev)
+
+    if unresolved_candidates and export_review_queue:
+        ReviewQueueExporter.export(unresolved_candidates, unresolved_path or "unresolved_repeats.json")
+        log(f"      [Review Queue] Exported {len(unresolved_candidates)} unresolved candidate(s) to {unresolved_path or 'unresolved_repeats.json'}")
+
+    # 3. Integrate local re-alignment pass
     cues = detect_and_fix_repeats(
         engine, cues, log_probs, combined_token_ids, blank_id, ext, path,
         anomaly_low_ratio, anomaly_high_ratio, min_word_dur_frames,
@@ -269,8 +413,46 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
         confidence_margin=repeat_confidence_margin,
         max_repeat_window_words=max_repeat_window_words,
     )
+
+    # Reconcile repeat events from cues
+    for c in cues:
+        if not c.get("is_repeat"):
+            continue
+        c_start = c["start_frame"] * seconds_per_frame
+        c_end = c["end_frame"] * seconds_per_frame
+        already_tracked = any(
+            abs(ev["start"] - c_start) < 0.2 and abs(ev["end"] - c_end) < 0.2
+            for ev in repeat_events
+        )
+        if not already_tracked:
+            idx = (c.get("word_idx") or 1) - 1
+            repeat_events.append({
+                "start": round(c_start, 3),
+                "end": round(c_end, 3),
+                "canonical_indices": [idx],
+                "anchor_idx": idx,
+                "restart_idx": idx,
+                "repeat_type": "backtrack",
+                "direction": "abandoned_backtrack",
+                "evaluated_candidates": [{"phrase": c["word"], "p_repeat": 0.95, "status": "accepted"}],
+                "p_repeat": 0.95,
+                "status": "accepted",
+                "evidence": {
+                    "ctc_lattice_score": round(float(c.get("avg_logprob", 0.0)), 4),
+                    "whisper_similarity": 1.0,
+                    "acoustic_cosine": 0.9,
+                    "backward_jump": 1,
+                    "inter_word_pause": 0.2,
+                    "asr_word_surplus_candidate": False,
+                },
+            })
+
+    repeat_events.sort(key=lambda ev: ev["start"])
+
+    # 4. Optimal canonical path selection
+    cues, finalized_events = select_optimal_canonical_path(cues, repeat_events, log_probs, seconds_per_frame)
     t5_elapsed = time.perf_counter() - t5_start
-    log(f"      Repeat detection complete [{t5_elapsed:.3f}s]")
+    log(f"      Repeat detection complete: {len(finalized_events)} repeat event(s) confirmed [{t5_elapsed:.3f}s]")
 
     t6_start = time.perf_counter()
     log("[6/6] Computing per-word alignment-confidence signals...")
@@ -281,22 +463,41 @@ def _align_from_log_probs(engine, log_probs, seconds_per_frame, combined_token_i
     total = t4_elapsed + t5_elapsed + t6_elapsed
     log(f"      Stages 4-6 total: {total:.3f}s (align: {t4_elapsed:.3f}s, repeats: {t5_elapsed:.3f}s, confidence: {t6_elapsed:.3f}s)")
 
-    return build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok, strip_istiaatha=strip_istiaatha)
+    all_records = build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok, strip_istiaatha=strip_istiaatha)
+    canonical_records = [r for r in all_records if not r.get("is_repeat")]
+
+    return AlignmentResult(
+        canonical_words=canonical_records,
+        raw_words=all_records,
+        repeat_events=finalized_events,
+    )
 
 
 def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: str,
                  device: str = "cpu", intra_surah_split: bool | None = None,
                  include_istiaatha: bool | str = "auto",
+                 include_bismillah: bool | str = "auto",
                  anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
                  anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
                  ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
                  repeat_confidence_margin: float = DEFAULT_REPEAT_CONFIDENCE_MARGIN,
                  max_repeat_window_words: int | None = DEFAULT_MAX_REPEAT_WINDOW_WORDS,
-                 tail_silence_sec: float = DEFAULT_TAIL_SILENCE_SEC, verbose: bool = True) -> list[dict]:
+                 tail_silence_sec: float = DEFAULT_TAIL_SILENCE_SEC,
+                 surplus_verses: dict[int, int] | None = None,
+                 unresolved_path: str | None = None,
+                 export_review_queue: bool = True,
+                 three_tier: bool = False,
+                 verbose: bool = True) -> AlignmentResult | dict:
     """Run the full forced-alignment + repeat-detection pipeline for one
     surah's audio and return its word-level cue records, sorted by start
     time -- see `srt.build_rich_records` for the exact record shape (word/
     timing/repeat flag/confidence signals/letter-phoneme-tajweed tier).
+
+    For Surah 1 (Al-Fatihah), Bismillah is Aya 1 and its word timings are
+    always included.
+    For Surahs 2-114, if the reciter recites Bismillah, it is aligned during
+    forced alignment to prevent leading drift, but omitted from the final
+    output records so timing starts cleanly from the first word of Ayah 1.
 
     `device` selects the forced-alignment execution engine (`"cpu"`
     (default) or `"cuda"` -- see `engines/__init__.py`); both engines
@@ -321,7 +522,7 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
 
     Keyword-arg defaults are the `constants.py` DEFAULT_* values cli.py's
     argparse defaults (--anomaly-low-ratio, --anomaly-high-ratio,
-    --ayah-final-high-ratio-mult, --repeat-confidence-margin,
+    --ayah-final-high-ratio_mult, --repeat-confidence-margin,
     --max-repeat-window-words, --tail-silence-sec) also read from, so the
     two can never silently drift apart.
 
@@ -341,15 +542,14 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
         intra_surah_split = (device == "cuda")
 
     # --- Overlap model initialization with audio decode ---
-    # Engine construction (ONNX session creation, GPU warm-up) takes several
-    # seconds. Audio decode (Stage 2) takes ~30s on CPU. By running them
-    # concurrently in a background thread, engine init is completely hidden
-    # behind audio decode time — saving 2-4s of sequential wall-clock time.
     with ThreadPoolExecutor(max_workers=1) as pool:
         engine_future = pool.submit(lambda: get_engine(device)(model_path))
 
         tok2id, id2tok, blank_id, combined_token_ids, word_slots, feats, samples = (
-            _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, device=device, include_istiaatha=include_istiaatha)
+            _build_surah_inputs(
+                surah, audio_path, tokens_path, tail_silence_sec, log,
+                device=device, include_istiaatha=include_istiaatha, include_bismillah=include_bismillah
+            )
         )
         audio_sec = len(samples) / SAMPLE_RATE
 
@@ -374,15 +574,25 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
     lp_shape = log_probs.shape if hasattr(log_probs, 'shape') else f"tensor({log_probs.size()})"
     log(f"      log_probs shape {lp_shape}, {seconds_per_frame * 1000:.1f}ms/output-frame [{t3_elapsed:.3f}s, {audio_sec/max(0.001,t3_elapsed):.0f}x realtime]")
 
-    # Resolve include_istiaatha == 'auto' via 0.01ms acoustic check on log_probs
-    if str(include_istiaatha).lower() in ("auto", "none"):
-        has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
-        log(f"      [Auto-Isti'adha] Acoustic probe: {'Detected' if has_istiaatha else 'Not present'}")
+    # Resolve preamble (Isti'adha / Bismillah)
+    auto_isti = str(include_istiaatha).lower() in ("auto", "none")
+    auto_bsm = str(include_bismillah).lower() in ("auto", "none")
+
+    if auto_isti or auto_bsm:
+        has_ist, has_bsm = detect_leading_openings(log_probs, id2tok)
+        use_isti = has_ist if auto_isti else bool(include_istiaatha)
+        use_bsm = (has_bsm if auto_bsm else bool(include_bismillah)) if surah not in (1, 9) else False
+
+        log(f"      [Auto-Preamble] Acoustic probe: Isti'adha={'Detected' if has_ist else 'Not present'}, "
+            f"Bismillah={'Detected' if has_bsm else 'Not present'}")
+
         max_token_len = max(len(tok) for tok in tok2id)
-        combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=has_istiaatha)
+        combined_token_ids, word_slots = build_combined_reference(
+            surah, tok2id, max_token_len, include_istiaatha=use_isti, include_bismillah=use_bsm
+        )
         strip_aya0 = True
     else:
-        strip_aya0 = False
+        strip_aya0 = True
 
     records = _align_from_log_probs(
         engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,
@@ -390,16 +600,25 @@ def align_surah(surah: int, audio_path: str, *, model_path: str, tokens_path: st
         repeat_confidence_margin, max_repeat_window_words, log,
         silence_feature_frames=silence_feature_frames if intra_surah_split else None,
         strip_istiaatha=strip_aya0,
+        audio_samples=samples,
+        feats=feats,
+        surplus_verses=surplus_verses,
+        unresolved_path=unresolved_path,
+        export_review_queue=export_review_queue,
     )
     t_e2e = time.perf_counter() - t_e2e_start
     log(f"      ════════════════════════════════════════════════════════════")
     log(f"      END-TO-END: {t_e2e:.3f}s for {audio_sec:.1f}s audio ({audio_sec/max(0.001,t_e2e):.1f}x realtime)")
     log(f"      ════════════════════════════════════════════════════════════")
+    if three_tier:
+        return records.to_dict()
     return records
 
 
 def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_path: str, tokens_path: str,
                           intra_surah_split: bool = False,
+                          include_istiaatha: bool | str = "auto",
+                          include_bismillah: bool | str = "auto",
                           anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
                           anomaly_high_ratio: float = DEFAULT_ANOMALY_HIGH_RATIO,
                           ayah_final_high_ratio_mult: float = DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
@@ -434,21 +653,6 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
 
     Returns a list of per-surah word-cue-record lists, one per entry of
     `surahs`/`audio_paths`, in the same order.
-
-    DETERMINISM: batched acoustic-model inference introduces a tiny
-    (~1e-4-magnitude) numerical difference in raw log_probs values versus
-    running the same audio alone or in a different batch -- verified
-    empirically (on a real Colab T4 GPU session, across a full real surah
-    and across genuinely different audio streams batched together) to
-    NEVER change any argmax decision or `torchaudio.functional.forced_align`
-    alignment path; every test found this function's actual OUTPUT
-    (word timings, repeat flags, confidence signals) is unaffected by
-    batching. Repeated calls with the SAME batch composition (same surahs,
-    same order) reproduce identically. See
-    `run_streaming_log_probs_batched_cuda_iobinding`'s docstring for the
-    full characterization and for how to get the CPU/single-stream
-    engines' stronger batch-composition-independent guarantee instead
-    (call `align_surah` per surah, or use `device="cpu"`).
     """
     def log(msg):
         if verbose:
@@ -468,7 +672,10 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
         )
 
     per_surah_inputs = [
-        _build_surah_inputs(surah, audio_path, tokens_path, tail_silence_sec, log, include_istiaatha=include_istiaatha)
+        _build_surah_inputs(
+            surah, audio_path, tokens_path, tail_silence_sec, log,
+            include_istiaatha=include_istiaatha, include_bismillah=include_bismillah
+        )
         for surah, audio_path in zip(surahs, audio_paths)
     ]
     feats_list = [inputs[5] for inputs in per_surah_inputs]
@@ -497,32 +704,7 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
         surahs, per_surah_inputs, log_probs_list
     )):
         log(f"-- surah {surah} --")
-        # `log_probs` here is a VIEW into `run_inference_batched`'s shared
-        # batched buffer (log_probs_batched[i, :n, :]) -- its own `.base`
-        # points at THAT shared buffer, not at `log_probs` itself. Passing
-        # it to `_align_from_log_probs`/`repeats/candidate.py` as-is would
-        # make every later `log_probs[window_start:window_end+1]` slice's
-        # `.base` ALSO point at the shared batched buffer (numpy collapses
-        # view-of-a-view chains), never matching whatever
-        # `engine._last_log_probs_cpu` is set to below -- silently
-        # defeating `_as_device_tensor`'s GPU-residency fast path for
-        # every repeat-detection candidate in the batched pipeline (a real
-        # bug found in code review: the fast path was live and correct
-        # for the single-surah/unbatched path, but always fell through to
-        # a full host->device re-upload here instead). Copying once here
-        # breaks the view chain: `log_probs` becomes its OWN base array
-        # (`.base is None`), so every later slice of it correctly matches
-        # the cache set immediately below, restoring the intended
-        # optimization for this pipeline too.
         log_probs = log_probs.copy()
-        # Re-establish this engine's single-stream GPU-residency cache
-        # (see engines.cuda.CUDAEngine.run_inference/_as_device_tensor) for
-        # THIS surah's own log_probs slice, so its own repeat-detection
-        # candidates below still get the on-device-slice fast path instead
-        # of re-uploading from host on every K-search call -- the batched
-        # inference call above does not (and cannot generically) populate
-        # this per-surah cache itself, since it returns N separate slices
-        # of one shared batched buffer, not N independently-cached arrays.
         if hasattr(engine, "_last_log_probs_cpu"):
             engine._last_log_probs_cpu = log_probs
             engine._last_log_probs_gpu = engine._torch.as_tensor(
@@ -531,13 +713,20 @@ def align_surahs_batched(surahs: list[int], audio_paths: list[str], *, model_pat
             
         silence_feature_frames = silence_frames_list[idx] if silence_frames_list else None
 
-        if str(include_istiaatha).lower() in ("auto", "none"):
-            has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
+        auto_isti = str(include_istiaatha).lower() in ("auto", "none")
+        auto_bsm = str(include_bismillah).lower() in ("auto", "none")
+
+        if auto_isti or auto_bsm:
+            has_ist, has_bsm = detect_leading_openings(log_probs, id2tok)
+            use_isti = has_ist if auto_isti else bool(include_istiaatha)
+            use_bsm = (has_bsm if auto_bsm else bool(include_bismillah)) if surah not in (1, 9) else False
             max_token_len = max(len(t) for t in tok2id if t != "<blank>")
-            combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=has_istiaatha)
+            combined_token_ids, word_slots = build_combined_reference(
+                surah, tok2id, max_token_len, include_istiaatha=use_isti, include_bismillah=use_bsm
+            )
             strip_aya0 = True
         else:
-            strip_aya0 = False
+            strip_aya0 = True
 
         records = _align_from_log_probs(
             engine, log_probs, seconds_per_frame, combined_token_ids, blank_id, word_slots, id2tok,

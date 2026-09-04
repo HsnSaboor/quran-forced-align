@@ -87,7 +87,7 @@ def _boundary_bridge_rules(prev_word, next_word):
         joint = build_text_reference(f"{prev_word} {next_word}", [prev_word, next_word], 0, 0)
         prev_isolated = _isolated_word_reference(prev_word)
         next_isolated = _isolated_word_reference(next_word)
-    except ValueError:
+    except (ValueError, IndexError, Exception):
         # A handful of Quranic words (e.g. the disjointed "muqattaat"
         # letters that open some surahs, like "الٓمٓ") are phonetized with
         # special-cased multi-letter-name expansions that quran_transcript
@@ -105,20 +105,9 @@ def _boundary_bridge_rules(prev_word, next_word):
         # of an already-correct base phonemization (the per-ayah
         # `char_info` this boundary check would have augmented is
         # entirely unaffected).
-        #
-        # Logged (not silently swallowed) precisely because this except
-        # clause catches a bare ValueError -- the SAME exception type
-        # build_text_reference's OWN internal invariant-violation checks
-        # raise (see its "not 1:1" and "no mapping covers this output
-        # character" checks above) for reasons that have NOTHING to do
-        # with muqattaat. Without a log line here, a future regression in
-        # either this package or quran_transcript that raises ValueError
-        # for a genuinely different reason would be silently misattributed
-        # to "known muqattaat limitation" and produce no signal that
-        # something is actually broken.
         logger.warning(
             "skipping cross-ayah-boundary tajweed probe for %r|%r: quran_phonetizer "
-            "raised ValueError when phonetizing one of these words standalone "
+            "raised an exception when phonetizing one of these words standalone "
             "(known limitation for muqattaat-letter words; if this word is NOT "
             "muqattaat letters, this may indicate a real bug)",
             prev_word, next_word,

@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 HF_REPO = "Saboorhsn/quran-stt-onnx"
 DEFAULT_FP16_MODEL = "zipformer_p_arabic_v3.1.fp16.onnx"
 DEFAULT_FP32_MODEL = "zipformer_p_arabic_v3.1.onnx"
-DEFAULT_INT8_MODEL = "zipformer_p_arabic_v3.1.int8.onnx"
+DEFAULT_INT8_MODEL = "quran-stt-int8.onnx"
 DEFAULT_TOKENS = "tokens.txt"
 
 CACHE_DIR = Path(os.environ.get("QURAN_FORCED_ALIGN_CACHE_DIR", Path.home() / ".cache" / "quran-forced-align"))

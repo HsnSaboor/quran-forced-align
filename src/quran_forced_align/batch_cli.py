@@ -135,7 +135,8 @@ def _prepare_single_surah_worker(
     intra_surah_split: bool,
     opus_dir: str | None,
     transcode_opus_flag: bool,
-    include_istiaatha: bool = True,
+    include_istiaatha: bool | str = "auto",
+    include_bismillah: bool | str = "auto",
 ) -> PreparedSurah:
     """Worker task: loads audio, extracts Fbank features, computes reference tokens,
     detects silence split points, and optionally transcodes to Opus with loudnorm.
@@ -149,7 +150,11 @@ def _prepare_single_surah_worker(
             raise FileNotFoundError(f"audio file for surah {surah:03d} not found in {audio_dir}")
 
     tok2id, id2tok, blank_id, max_token_len = tokens_info
-    combined_token_ids, word_slots = build_combined_reference(surah, tok2id, max_token_len, include_istiaatha=include_istiaatha)
+    init_istiaatha = False if str(include_istiaatha).lower() in ("auto", "none") else bool(include_istiaatha)
+    init_bismillah = False if str(include_bismillah).lower() in ("auto", "none") or surah in (1, 9) else bool(include_bismillah)
+    combined_token_ids, word_slots = build_combined_reference(
+        surah, tok2id, max_token_len, include_istiaatha=init_istiaatha, include_bismillah=init_bismillah
+    )
 
     # Decode audio to 16kHz mono PCM
     samples = load_audio_as_wav16k(audio_path, threads=2)
@@ -200,7 +205,8 @@ def run_pipelined_batch(
     intra_surah_split: bool = True,
     opus_dir: str | None = None,
     transcode_opus: bool = False,
-    include_istiaatha: bool = True,
+    include_istiaatha: bool | str = "auto",
+    include_bismillah: bool | str = "auto",
     prefetch_workers: int = 4,
     prefetch_batches: int = 2,
     anomaly_low_ratio: float = DEFAULT_ANOMALY_LOW_RATIO,
@@ -253,6 +259,7 @@ def run_pipelined_batch(
                             opus_dir,
                             transcode_opus,
                             include_istiaatha,
+                            include_bismillah,
                         ): s
                         for s in batch_surahs
                     }
@@ -370,15 +377,22 @@ def run_pipelined_batch(
                         engine._last_log_probs_cpu = log_probs.cpu().numpy() if hasattr(log_probs, "cpu") else None
 
                 try:
-                    if str(include_istiaatha).lower() in ("auto", "none"):
-                        from .pipeline import detect_leading_istiaatha
-                        has_istiaatha = detect_leading_istiaatha(log_probs, id2tok)
-                        comb_ids, w_slots = build_combined_reference(s, tok2id, max_token_len, include_istiaatha=has_istiaatha)
+                    auto_isti = str(include_istiaatha).lower() in ("auto", "none")
+                    auto_bsm = str(include_bismillah).lower() in ("auto", "none")
+
+                    if auto_isti or auto_bsm:
+                        from .pipeline import detect_leading_openings
+                        has_ist, has_bsm = detect_leading_openings(log_probs, id2tok)
+                        use_isti = has_ist if auto_isti else bool(include_istiaatha)
+                        use_bsm = (has_bsm if auto_bsm else bool(include_bismillah)) if s not in (1, 9) else False
+                        comb_ids, w_slots = build_combined_reference(
+                            s, tok2id, max_token_len, include_istiaatha=use_isti, include_bismillah=use_bsm
+                        )
                         strip_aya0 = True
                     else:
                         comb_ids = it.combined_token_ids
                         w_slots = it.word_slots
-                        strip_aya0 = False
+                        strip_aya0 = True
 
                     records = _align_from_log_probs(
                         engine,
@@ -551,7 +565,7 @@ def _align_batch_of_surahs(surahs: list[int], audio_dir: str, out_dir: str, mode
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from .cli import parse_istiaatha_choice
+    from .cli import parse_bismillah_choice, parse_istiaatha_choice
     ap = argparse.ArgumentParser(
         prog="quran-forced-align-batch",
         description="High-throughput asynchronous forced-alignment batch pipeline for Quran surahs",
@@ -626,6 +640,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_istiaatha_choice,
         default="auto",
         help="include Isti'adha preamble in reference: 'auto' (default), 'yes', or 'no'",
+    )
+    ap.add_argument(
+        "--include-bismillah",
+        type=parse_bismillah_choice,
+        default="auto",
+        help="include Bismillah preamble in reference: 'auto' (default), 'yes', or 'no'",
     )
     ap.add_argument(
         "-q", "--quiet",
@@ -718,6 +738,7 @@ def main():
         opus_dir=args.opus_dir,
         transcode_opus=args.transcode_opus or (args.opus_dir is not None),
         include_istiaatha=args.include_istiaatha,
+        include_bismillah=args.include_bismillah,
         prefetch_workers=args.prefetch_workers,
         prefetch_batches=args.prefetch_batches,
         anomaly_low_ratio=args.anomaly_low_ratio,
