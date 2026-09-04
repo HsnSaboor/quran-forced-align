@@ -55,7 +55,8 @@ class RangeRequestHandler(SimpleHTTPRequestHandler):
                 remaining -= len(data)
 
 def run(port=8000):
-    os.chdir('/home/saboor/code/quran-forced-align')
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(project_dir)
     server = HTTPServer(('0.0.0.0', port), RangeRequestHandler)
     print(f"🚀 Quran Forced-Alignment Web Player Server running at http://localhost:{port}/web-player/index.html")
     try:

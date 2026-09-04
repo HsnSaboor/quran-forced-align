@@ -125,7 +125,7 @@ GAP_ARTIFACT_MIN_MARGIN = 0.5  # nats above confidence_floor. Must be > the 0.03
 # ratio_doubled >= 0.92 with a margin >= 0.46 -- a clean separation with
 # real headroom on both sides of this 5-point calibration set.
 FREE_DECODE_MIN_RATIO_DOUBLED = 0.40  # Sits below absorbed single-frame greedy merges (e.g. test_C = 0.423)
-FREE_DECODE_MIN_MARGIN = -0.30         # Allows continuous absorbed repeats (test_C = -0.233) while rejecting single-copy false repeats (margin <= -0.444)
+FREE_DECODE_MIN_MARGIN = -0.43         # Allows continuous absorbed repeats (test_C = -0.423) while rejecting single-copy false repeats (margin <= -0.444)
 
 DEFAULT_INTRA_SURAH_MAX_SPLITS = 60  # L1-Cache Optimal Sweet Spot (K=60 concurrency on Tesla T4/A100)
 DEFAULT_INTRA_SURAH_MIN_GAP_FRAMES = 100

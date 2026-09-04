@@ -1,68 +1,231 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" class="scroll-smooth">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light dark" />
 <title>Quran Forced-Alignment Word Player</title>
 
-<!-- Amiri: Quran Arabic font -->
+<!-- Prevent Flash of Unstyled Content (FOUC) for Theme -->
+<script>
+  (() => {
+    const savedTheme = localStorage.getItem('quran_player_theme');
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (savedTheme === 'dark' || (!savedTheme && systemDark)) {
+      document.documentElement.classList.add('dark');
+      document.querySelector('meta[name="color-scheme"]').content = 'dark';
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.querySelector('meta[name="color-scheme"]').content = 'light';
+    }
+  })();
+</script>
+
+<!-- Amiri: Quran Arabic font & Inter UI font -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
+    darkMode: 'class',
     theme: {
       extend: {
         fontFamily: {
           amiri: ['Amiri', 'serif'],
           ui: ['Inter', 'sans-serif'],
         },
+        colors: {
+          stone: {
+            850: '#201d1a',
+            950: '#0c0a09',
+          }
+        }
       },
     },
   };
 </script>
 
 <style>
-  .word {
-    transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+  :root {
+    color-scheme: light dark;
   }
+
+  /* Word Container with top yellow number badge */
+  .word {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    vertical-align: bottom;
+    margin: 0.2rem 0.22rem;
+    padding: 0.2rem 0.35rem 0.15rem;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 120ms ease, color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  }
+
+  /* Yellow word numbers, lifted up to never overlap with Arabic tashkeel/madd */
+  .word-num {
+    font-family: 'Inter', monospace, sans-serif;
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1;
+    color: #eab308; /* bright yellow-500 */
+    margin-bottom: 0.45rem; /* lifted 1 point up to avoid diacritics */
+    user-select: none;
+    pointer-events: none;
+    transition: color 120ms ease, transform 120ms ease;
+    text-shadow: 0 0 1px rgb(0 0 0 / 0.25);
+  }
+  .dark .word-num {
+    color: #facc15; /* glowing yellow-400 */
+    text-shadow: 0 0 6px rgb(250 204 21 / 0.4);
+  }
+
+  .word:hover .word-num {
+    color: #ca8a04; /* amber-600 */
+    transform: translateY(-1px);
+  }
+  .dark .word:hover .word-num {
+    color: #fef08a; /* yellow-200 */
+    transform: translateY(-1px);
+  }
+
+  .word-text {
+    font-family: 'Amiri', serif;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+
+  /* Light mode word states */
   .word.current {
     background-color: rgb(16 185 129 / 0.25);
+    transform: scale(1.06);
+    box-shadow: 0 0 12px rgb(16 185 129 / 0.25);
+  }
+  .word.current .word-text {
+    color: rgb(4 120 87);
+  }
+  .word.current .word-num {
     color: rgb(5 150 105);
-    transform: scale(1.04);
+    font-weight: 900;
   }
+
   .word.repeat-flagged {
-    background-color: rgb(254 243 199 / 0.85);
+    background-color: rgb(254 243 199 / 0.9);
     border-bottom: 2.5px solid rgb(217 119 6);
-    color: rgb(146 64 14);
-    border-radius: 4px;
-    padding: 1px 3px;
   }
+  .word.repeat-flagged .word-text {
+    color: rgb(146 64 14);
+  }
+  .word.repeat-flagged .word-num {
+    color: rgb(180 83 9);
+    font-weight: 900;
+  }
+
   .word.repeat-flagged.current {
     background-color: rgb(245 158 11 / 0.45);
-    color: rgb(120 53 15);
-    transform: scale(1.06);
-    box-shadow: 0 0 12px rgb(245 158 11 / 0.6);
+    transform: scale(1.08);
+    box-shadow: 0 0 16px rgb(245 158 11 / 0.65);
   }
+  .word.repeat-flagged.current .word-text {
+    color: rgb(120 53 15);
+  }
+  .word.repeat-flagged.current .word-num {
+    color: rgb(120 53 15);
+    font-weight: 900;
+  }
+
+  /* Dark mode word states */
+  .dark .word.current {
+    background-color: rgb(16 185 129 / 0.38);
+    transform: scale(1.06);
+    box-shadow: 0 0 16px rgb(52 211 153 / 0.45);
+  }
+  .dark .word.current .word-text {
+    color: rgb(52 211 153);
+  }
+  .dark .word.current .word-num {
+    color: rgb(110 231 183);
+    font-weight: 900;
+  }
+
+  .dark .word.repeat-flagged {
+    background-color: rgb(120 53 15 / 0.55);
+    border-bottom: 2.5px solid rgb(245 158 11);
+  }
+  .dark .word.repeat-flagged .word-text {
+    color: rgb(253 230 138);
+  }
+  .dark .word.repeat-flagged .word-num {
+    color: rgb(253 224 71);
+    font-weight: 900;
+  }
+
+  .dark .word.repeat-flagged.current {
+    background-color: rgb(245 158 11 / 0.5);
+    transform: scale(1.08);
+    box-shadow: 0 0 20px rgb(245 158 11 / 0.8);
+  }
+  .dark .word.repeat-flagged.current .word-text {
+    color: rgb(254 240 138);
+  }
+  .dark .word.repeat-flagged.current .word-num {
+    color: rgb(254 240 138);
+    font-weight: 900;
+  }
+
+  /* Hide word numbers toggle */
+  .hide-word-numbers .word-num {
+    display: none !important;
+  }
+  .hide-word-numbers .word {
+    padding-top: 0.1rem;
+    margin: 0.05rem 0.12rem;
+  }
+
   .quran-text {
     font-family: 'Amiri', serif;
-    line-height: 2.6;
-    font-size: 1.9rem;
+    line-height: 2.9;
+    font-size: 2.0rem;
+    word-spacing: 0.15rem;
   }
   @media (min-width: 768px) {
-    .quran-text { font-size: 2.35rem; }
+    .quran-text {
+      font-size: 2.45rem;
+      line-height: 3.0;
+      word-spacing: 0.2rem;
+    }
   }
+
+  /* Enlarged and beautifully styled Verse Separator / Ayah End Marker */
   .ayah-end-marker {
     font-family: 'Amiri', serif;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    margin: 0 0.35rem;
-    color: rgb(120 113 108);
-    font-size: 1.1rem;
+    margin: 0 0.55rem;
+    color: #b45309;
+    font-size: 2.0rem;
+    vertical-align: -0.08em;
+    line-height: 1;
+    user-select: none;
+    transition: color 150ms ease, transform 150ms ease;
   }
+  @media (min-width: 768px) {
+    .ayah-end-marker {
+      font-size: 2.45rem;
+      margin: 0 0.7rem;
+    }
+  }
+  .dark .ayah-end-marker {
+    color: #fbbf24;
+    text-shadow: 0 0 10px rgb(251 191 36 / 0.35);
+  }
+
   .timeline-repeat-range {
     position: absolute;
     top: 0;
@@ -85,22 +248,51 @@
 </style>
 </head>
 
-<body class="bg-stone-50 text-stone-900 font-ui min-h-screen">
+<body class="bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100 font-ui min-h-screen transition-colors duration-200">
 
   <div class="max-w-4xl mx-auto px-4 py-6 md:py-10" dir="ltr">
 
     <!-- Header -->
-    <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-2 border-b border-stone-200 pb-4">
+    <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-stone-200 dark:border-stone-800 pb-4">
       <div>
-        <h1 class="text-xl md:text-2xl font-bold text-stone-800 tracking-tight">Quran Forced-Alignment Player</h1>
-        <p class="text-xs md:text-sm text-stone-500 mt-0.5">
-          Interactive word-by-word playback with millisecond synchronization and repeat detection.
+        <h1 class="text-xl md:text-2xl font-bold text-stone-800 dark:text-stone-100 tracking-tight flex items-center gap-2">
+          <span>Quran Forced-Alignment Player</span>
+          <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">v2.3</span>
+        </h1>
+        <p class="text-xs md:text-sm text-stone-500 dark:text-stone-400 mt-0.5">
+          Word-by-word synchronized audio recitation with millisecond repeat detection & word index positioning.
         </p>
       </div>
-      <div class="flex items-center gap-2">
-        <label class="flex items-center gap-2 text-xs md:text-sm text-stone-600 select-none cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-stone-200 shadow-sm">
+      
+      <div class="flex items-center flex-wrap gap-2.5">
+        
+        <!-- Dark / Light Mode Toggle Button -->
+        <button id="theme-toggle-btn" type="button" aria-label="Toggle Dark/Light Mode" title="Toggle Dark/Light Mode (Hotkey: D)"
+          class="flex items-center justify-center w-9 h-9 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 shadow-sm transition-all">
+          <!-- Sun Icon (shown in dark mode) -->
+          <svg id="theme-sun-icon" class="w-4 h-4 hidden dark:block text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          <!-- Moon Icon (shown in light mode) -->
+          <svg id="theme-moon-icon" class="w-4 h-4 block dark:hidden text-stone-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+        </button>
+
+        <!-- Word Numbers Toggle -->
+        <label class="flex items-center gap-2 text-xs md:text-sm text-stone-600 dark:text-stone-300 select-none cursor-pointer bg-white dark:bg-stone-900 px-3 py-1.5 rounded-lg border border-stone-200 dark:border-stone-700 shadow-sm" title="Toggle Word Numbers (Hotkey: W)">
+          <input id="word-numbers-toggle" type="checkbox" checked
+            class="rounded border-stone-300 dark:border-stone-600 text-yellow-500 focus:ring-yellow-500/40 dark:bg-stone-800" />
+          <span class="flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-yellow-400 dark:bg-yellow-300 inline-block"></span>
+            Word Numbers (1..N)
+          </span>
+        </label>
+
+        <!-- Auto-scroll toggle -->
+        <label class="flex items-center gap-2 text-xs md:text-sm text-stone-600 dark:text-stone-300 select-none cursor-pointer bg-white dark:bg-stone-900 px-3 py-1.5 rounded-lg border border-stone-200 dark:border-stone-700 shadow-sm" title="Toggle Auto-Scroll (Hotkey: S)">
           <input id="autoscroll-toggle" type="checkbox" checked
-            class="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500/40" />
+            class="rounded border-stone-300 dark:border-stone-600 text-emerald-600 focus:ring-emerald-500/40 dark:bg-stone-800" />
           Auto-scroll
         </label>
       </div>
@@ -110,27 +302,27 @@
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
       
       <!-- Audio File Input -->
-      <label id="audio-drop-card" class="relative group cursor-pointer flex items-center gap-3.5 bg-white hover:bg-stone-50 border border-stone-300 hover:border-emerald-500 rounded-xl p-3.5 shadow-sm transition-all">
-        <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+      <label id="audio-drop-card" class="relative group cursor-pointer flex items-center gap-3.5 bg-white dark:bg-stone-900 hover:bg-stone-50 dark:hover:bg-stone-850 border border-stone-300 dark:border-stone-700 hover:border-emerald-500 dark:hover:border-emerald-500 rounded-xl p-3.5 shadow-sm transition-all">
+        <div class="w-10 h-10 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
         </div>
         <div class="flex-1 min-w-0">
-          <div class="text-xs text-stone-400 uppercase font-semibold tracking-wider">Audio Source</div>
-          <div id="audio-file-label" class="text-sm font-medium text-stone-800 truncate">Choose Audio (.opus, .mp3, .wav, .m4a)…</div>
+          <div class="text-xs text-stone-400 dark:text-stone-500 uppercase font-semibold tracking-wider">Audio Source</div>
+          <div id="audio-file-label" class="text-sm font-medium text-stone-800 dark:text-stone-200 truncate">Choose Audio (.opus, .mp3, .wav, .m4a)…</div>
         </div>
         <input id="custom-audio-input" type="file" accept="audio/*,.mp3,.wav,.opus,.m4a,.flac,.ogg" class="hidden" />
       </label>
 
-      <!-- JSON / SRT File Input -->
-      <label id="json-drop-card" class="relative group cursor-pointer flex items-center gap-3.5 bg-white hover:bg-stone-50 border border-stone-300 hover:border-emerald-500 rounded-xl p-3.5 shadow-sm transition-all">
-        <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+      <!-- JSON / PB / SRT File Input -->
+      <label id="json-drop-card" class="relative group cursor-pointer flex items-center gap-3.5 bg-white dark:bg-stone-900 hover:bg-stone-50 dark:hover:bg-stone-850 border border-stone-300 dark:border-stone-700 hover:border-emerald-500 dark:hover:border-emerald-500 rounded-xl p-3.5 shadow-sm transition-all">
+        <div class="w-10 h-10 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         </div>
         <div class="flex-1 min-w-0">
-          <div class="text-xs text-stone-400 uppercase font-semibold tracking-wider">Alignment Data</div>
-          <div id="json-file-label" class="text-sm font-medium text-stone-800 truncate">Choose JSON / SRT File…</div>
+          <div class="text-xs text-stone-400 dark:text-stone-500 uppercase font-semibold tracking-wider">Alignment Data</div>
+          <div id="json-file-label" class="text-sm font-medium text-stone-800 dark:text-stone-200 truncate">Choose JSON / PB / SRT File…</div>
         </div>
-        <input id="custom-json-input" type="file" accept=".json,.srt,text/plain" class="hidden" />
+        <input id="custom-json-input" type="file" accept=".json,.pb,.srt,text/plain,application/octet-stream,application/x-protobuf" class="hidden" />
       </label>
 
     </div>
@@ -139,12 +331,12 @@
     <audio id="audio" class="absolute w-0 h-0 overflow-hidden opacity-0 pointer-events-none" preload="metadata"></audio>
 
     <!-- Status Bar -->
-    <div id="status" class="text-xs text-stone-500 mb-3 font-mono bg-white px-3 py-1.5 rounded-lg border border-stone-200 flex items-center justify-between">
-      <span>Ready. Select an audio file and JSON/SRT alignment file or drag & drop them here.</span>
+    <div id="status" class="text-xs text-stone-500 dark:text-stone-400 mb-3 font-mono bg-white dark:bg-stone-900 px-3 py-1.5 rounded-lg border border-stone-200 dark:border-stone-800 flex items-center justify-between shadow-2xs">
+      <span>Ready. Select an audio file and JSON/SRT/PB alignment file or drag & drop them here.</span>
     </div>
 
     <!-- Legend -->
-    <div class="flex flex-wrap items-center gap-4 mb-4 text-xs text-stone-500 px-1">
+    <div class="flex flex-wrap items-center gap-4 mb-4 text-xs text-stone-500 dark:text-stone-400 px-1">
       <span class="flex items-center gap-1.5">
         <span class="inline-block w-3 h-3 rounded-sm" style="background-color: rgb(16 185 129 / 0.35)"></span>
         currently recited word
@@ -157,39 +349,44 @@
         <span class="inline-block w-3 h-3 rounded-sm" style="background-color: rgb(217 119 6 / 0.35)"></span>
         repeat range on timeline
       </span>
+      <span class="flex items-center gap-1.5">
+        <span class="inline-block font-mono text-[10px] font-extrabold text-yellow-600 dark:text-yellow-400 border border-yellow-300 dark:border-yellow-700/60 rounded px-1">1..N</span>
+        yellow word numbers
+      </span>
     </div>
 
     <!-- Repeat Sites Explorer -->
-    <div id="repeat-explorer-container" class="mb-4 bg-amber-50/90 border border-amber-300 rounded-xl p-3.5 shadow-sm hidden font-ui">
+    <div id="repeat-explorer-container" class="mb-4 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 rounded-xl p-3.5 shadow-sm hidden font-ui">
       <div class="flex items-center justify-between mb-2">
-        <span class="text-xs font-semibold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
-          <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        <span class="text-xs font-semibold uppercase tracking-wider text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+          <svg class="w-4 h-4 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
           Detected Repeat Sites (<span id="repeat-explorer-count">0</span> sites)
         </span>
-        <span class="text-xs text-amber-700 font-medium">Click any site to jump & play</span>
+        <span class="text-xs text-amber-700 dark:text-amber-400 font-medium">Click any site to jump & play</span>
       </div>
       <div id="repeat-explorer-list" class="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1"></div>
     </div>
 
     <!-- Quran Text Main Pane -->
-    <main class="bg-white border border-stone-200 rounded-2xl shadow-sm p-6 md:p-10 mb-32 min-h-[300px]">
-      <div id="quran-text" class="quran-text text-right" dir="rtl">
-        <div class="text-center py-12 text-stone-400 font-ui text-base">
-          <svg class="w-12 h-12 mx-auto text-stone-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-          Please select or drop an Audio file and JSON / SRT alignment file above.
+    <main class="bg-white dark:bg-stone-900/90 border border-stone-200 dark:border-stone-800 rounded-2xl shadow-sm dark:shadow-2xl p-6 md:p-10 mb-32 min-h-[300px] transition-colors duration-200">
+      <div id="quran-text" class="quran-text text-right text-stone-900 dark:text-stone-100" dir="rtl">
+        <div class="text-center py-12 text-stone-400 dark:text-stone-500 font-ui text-base">
+          <svg class="w-12 h-12 mx-auto text-stone-300 dark:text-stone-700 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+          Please select or drop an Audio file and JSON / SRT / PB alignment file above.
         </div>
       </div>
     </main>
 
   </div>
 
-  <!-- Floating Playback Dock -->
-  <div class="fixed inset-x-0 bottom-4 px-4 z-20 pointer-events-none" dir="ltr">
+  <!-- Floating Playback Dock with Full Time Indicators (Elapsed / Remaining / Total) -->
+  <div class="fixed inset-x-0 bottom-4 px-3 md:px-4 z-20 pointer-events-none" dir="ltr">
     <div id="player-dock"
-      class="pointer-events-auto mx-auto max-w-xl bg-white/90 backdrop-blur-md border border-stone-200
-             rounded-2xl shadow-lg shadow-stone-900/10 px-3 py-2.5 md:px-4 md:py-3
-             flex items-center gap-2 md:gap-3">
+      class="pointer-events-auto mx-auto max-w-2xl bg-white/95 dark:bg-stone-900/95 backdrop-blur-md border border-stone-200 dark:border-stone-700
+             rounded-2xl shadow-xl shadow-stone-900/10 dark:shadow-stone-950/60 px-3 py-2.5 md:px-4 md:py-3
+             flex items-center gap-2 md:gap-3 transition-colors duration-200">
 
+      <!-- Play / Pause Button -->
       <button id="play-pause-btn" aria-label="Play"
         class="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full
                bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800
@@ -198,34 +395,48 @@
         <svg id="pause-icon" class="w-4 h-4 hidden" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
       </button>
 
-      <button id="prev-repeat-btn" aria-label="Previous repeat" title="Previous repeat"
-        class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full text-stone-500
-               hover:bg-stone-100 active:bg-stone-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+      <!-- Prev Repeat Button -->
+      <button id="prev-repeat-btn" aria-label="Previous repeat" title="Previous repeat (Hotkey: K)"
+        class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full text-stone-500 dark:text-stone-400
+               hover:bg-stone-100 dark:hover:bg-stone-800 active:bg-stone-200 dark:active:bg-stone-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM11 12l9-6v12z" transform="scale(-1,1) translate(-24,0)"/></svg>
       </button>
 
+      <!-- Current Elapsed Time -->
+      <span id="current-time-display" class="font-mono text-xs font-bold text-stone-700 dark:text-stone-300 flex-shrink-0 min-w-[38px] text-right select-none">0:00</span>
+
       <!-- Custom Timeline Scrubber with Repeat Overlays -->
-      <div id="timeline" class="relative flex-1 h-3.5 rounded-full bg-stone-200 cursor-pointer select-none overflow-hidden shadow-inner">
+      <div id="timeline" class="relative flex-1 h-3.5 rounded-full bg-stone-200 dark:bg-stone-800 cursor-pointer select-none overflow-hidden shadow-inner border border-stone-300 dark:border-stone-700">
         <div id="timeline-repeats" class="absolute inset-y-0 left-0 w-full"></div>
         <div id="timeline-playhead"
-             class="absolute inset-y-0 w-1 rounded-full bg-stone-700 pointer-events-none"
+             class="absolute inset-y-0 w-1 rounded-full bg-stone-700 dark:bg-stone-200 pointer-events-none"
              style="left: 0%"></div>
       </div>
 
-      <button id="next-repeat-btn" aria-label="Next repeat" title="Next repeat"
-        class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full text-stone-500
-               hover:bg-stone-100 active:bg-stone-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+      <!-- Remaining Time & Total Time Display -->
+      <div class="flex items-center gap-1 font-mono text-xs text-stone-500 dark:text-stone-400 flex-shrink-0 min-w-[85px] justify-start select-none">
+        <span id="remaining-time-display" class="font-bold text-amber-700 dark:text-amber-400" title="Time Remaining">-0:00</span>
+        <span class="text-stone-400 dark:text-stone-600">/</span>
+        <span id="total-time-display" class="text-stone-600 dark:text-stone-400" title="Total Duration">0:00</span>
+      </div>
+
+      <!-- Next Repeat Button -->
+      <button id="next-repeat-btn" aria-label="Next repeat" title="Next repeat (Hotkey: J)"
+        class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full text-stone-500 dark:text-stone-400
+               hover:bg-stone-100 dark:hover:bg-stone-800 active:bg-stone-200 dark:active:bg-stone-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM11 12l9-6v12z"/></svg>
       </button>
 
+      <!-- Playback Rate Button -->
       <button id="speed-btn"
-        class="flex-shrink-0 text-xs md:text-sm font-medium text-stone-600 hover:bg-stone-100 active:bg-stone-200
+        class="flex-shrink-0 text-xs md:text-sm font-medium text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 active:bg-stone-200 dark:active:bg-stone-700
                rounded-full w-11 h-8 transition-colors">
         1.0x
       </button>
     </div>
+
     <div class="text-center mt-1.5">
-      <span id="repeat-count" class="text-xs text-stone-400 font-mono bg-white/70 backdrop-blur-sm rounded-full px-2 py-0.5"></span>
+      <span id="repeat-count" class="text-xs text-stone-400 dark:text-stone-500 font-mono bg-white/70 dark:bg-stone-900/70 backdrop-blur-sm rounded-full px-2 py-0.5 border border-stone-200/50 dark:border-stone-800/50"></span>
     </div>
   </div>
 
@@ -243,9 +454,14 @@
     status: document.getElementById('status'),
     speedBtn: document.getElementById('speed-btn'),
     autoscroll: document.getElementById('autoscroll-toggle'),
+    wordNumbersToggle: document.getElementById('word-numbers-toggle'),
+    themeToggleBtn: document.getElementById('theme-toggle-btn'),
     timeline: document.getElementById('timeline'),
     timelineRepeats: document.getElementById('timeline-repeats'),
     timelinePlayhead: document.getElementById('timeline-playhead'),
+    currentTimeDisplay: document.getElementById('current-time-display'),
+    remainingTimeDisplay: document.getElementById('remaining-time-display'),
+    totalTimeDisplay: document.getElementById('total-time-display'),
     prevRepeatBtn: document.getElementById('prev-repeat-btn'),
     nextRepeatBtn: document.getElementById('next-repeat-btn'),
     repeatCount: document.getElementById('repeat-count'),
@@ -269,15 +485,68 @@
   let repeatSites = [];
   let totalDuration = 0;
 
+  // --- Theme Management ---
+  function toggleTheme() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    const theme = isDark ? 'dark' : 'light';
+    localStorage.setItem('quran_player_theme', theme);
+    document.querySelector('meta[name="color-scheme"]').content = theme;
+  }
+
+  els.themeToggleBtn?.addEventListener('click', toggleTheme);
+
+  // Listen to OS-level theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('quran_player_theme')) {
+      if (e.matches) {
+        document.documentElement.classList.add('dark');
+        document.querySelector('meta[name="color-scheme"]').content = 'dark';
+      } else {
+        document.documentElement.classList.remove('dark');
+        document.querySelector('meta[name="color-scheme"]').content = 'light';
+      }
+    }
+  });
+
+  // --- Word Numbers Toggle Management ---
+  function setWordNumbersVisible(show) {
+    if (show) {
+      els.text.classList.remove('hide-word-numbers');
+    } else {
+      els.text.classList.add('hide-word-numbers');
+    }
+    if (els.wordNumbersToggle) els.wordNumbersToggle.checked = show;
+    localStorage.setItem('quran_player_word_numbers', show ? 'true' : 'false');
+  }
+
+  const savedWordNums = localStorage.getItem('quran_player_word_numbers');
+  if (savedWordNums === 'false') {
+    setWordNumbersVisible(false);
+  }
+
+  els.wordNumbersToggle?.addEventListener('change', (e) => {
+    setWordNumbersVisible(e.target.checked);
+  });
+
   function normalizeWordRecords(rawList) {
+    let currentAya = null;
+    let wordInAyaCounter = 1;
     return rawList.map((r) => {
       const start = Number(r.start_time_sec ?? r.start_sec ?? r.start ?? 0);
       const end = Number(r.end_time_sec ?? r.end_sec ?? r.end ?? (start + 0.5));
       const word = String(r.word ?? r.text ?? '').trim();
       const aya = Number(r.aya ?? r.ayah ?? 1);
       const sura = Number(r.sura ?? r.surah ?? 1);
+      if (aya !== currentAya) {
+        currentAya = aya;
+        wordInAyaCounter = 1;
+      }
+      let wi = r.word_idx !== undefined ? Number(r.word_idx) : (r.wi !== undefined ? Number(r.wi) : (r.wordIndex !== undefined ? Number(r.wordIndex) : undefined));
+      if (wi === undefined && !r.is_repeat) {
+        wi = wordInAyaCounter++;
+      }
       const is_repeat = Boolean(r.is_repeat ?? false);
-      return { word, start, end, aya, sura, is_repeat };
+      return { word, start, end, aya, sura, wi, is_repeat };
     }).filter(r => r.word.length > 0);
   }
 
@@ -330,23 +599,49 @@
   function buildDisplayMapping(wordList) {
     const disp = [];
     const mapping = new Array(wordList.length);
-    let canonicalCursor = 0;
+    const seenAyahWord = new Map();
 
     for (let c = 0; c < wordList.length; c++) {
       const cue = wordList[c];
+      const key = (cue.wi !== undefined) ? `${cue.aya}:${cue.wi}` : null;
+
       if (!cue.is_repeat) {
-        disp.push({ word: cue.word, aya: cue.aya, sura: cue.sura });
-        mapping[c] = canonicalCursor;
-        canonicalCursor++;
+        if (key && seenAyahWord.has(key)) {
+          mapping[c] = seenAyahWord.get(key);
+        } else {
+          disp.push({ word: cue.word, aya: cue.aya, sura: cue.sura, wi: cue.wi });
+          const dispIdx = disp.length - 1;
+          if (key) seenAyahWord.set(key, dispIdx);
+          mapping[c] = dispIdx;
+        }
       } else {
         let found = -1;
-        for (let back = canonicalCursor - 1; back >= Math.max(0, canonicalCursor - 30); back--) {
-          if (disp[back].word === cue.word && disp[back].aya === cue.aya) {
-            found = back;
-            break;
+        if (key && seenAyahWord.has(key)) {
+          found = seenAyahWord.get(key);
+        } else if (cue.wi !== undefined) {
+          for (let back = disp.length - 1; back >= 0; back--) {
+            if (disp[back].aya === cue.aya && disp[back].wi === cue.wi) {
+              found = back;
+              break;
+            }
           }
         }
-        mapping[c] = found >= 0 ? found : Math.max(0, canonicalCursor - 1);
+        if (found < 0) {
+          for (let back = disp.length - 1; back >= Math.max(0, disp.length - 30); back--) {
+            if (disp[back].word === cue.word && disp[back].aya === cue.aya) {
+              found = back;
+              break;
+            }
+          }
+        }
+        if (found >= 0) {
+          mapping[c] = found;
+        } else {
+          disp.push({ word: cue.word, aya: cue.aya, sura: cue.sura, wi: cue.wi });
+          const dispIdx = disp.length - 1;
+          if (key) seenAyahWord.set(key, dispIdx);
+          mapping[c] = dispIdx;
+        }
       }
     }
     return { displayWords: disp, cueToDisplayIdx: mapping };
@@ -357,7 +652,7 @@
     wordEls = new Array(displayWords.length);
 
     if (displayWords.length === 0) {
-      els.text.innerHTML = '<div class="text-center py-12 text-stone-400 font-ui text-base">No words loaded.</div>';
+      els.text.innerHTML = '<div class="text-center py-12 text-stone-400 dark:text-stone-500 font-ui text-base">No words loaded.</div>';
       return;
     }
 
@@ -374,26 +669,43 @@
 
     let currentAya = null;
     let ayaWrap = null;
+    let ayaWordCounter = 1;
 
     displayWords.forEach((w, d) => {
       if (w.aya !== currentAya) {
         if (ayaWrap && currentAya !== null) {
           const marker = document.createElement('span');
           marker.className = 'ayah-end-marker';
+          marker.title = `Ayah ${currentAya}`;
           marker.textContent = `\u06DD${toArabicIndicDigits(currentAya)}`;
           ayaWrap.appendChild(marker);
         }
         currentAya = w.aya;
+        ayaWordCounter = 1;
         ayaWrap = document.createElement('div');
         ayaWrap.className = 'ayah-group inline';
         ayaWrap.dataset.aya = String(currentAya);
         els.text.appendChild(ayaWrap);
       }
 
+      const wordNum = w.wi !== undefined ? w.wi : ayaWordCounter;
+      ayaWordCounter++;
+
       const isRep = repeatedSlots.has(d);
       const span = document.createElement('span');
-      span.className = 'word cursor-pointer rounded px-0.5 inline-block select-none' + (isRep ? ' repeat-flagged' : '');
-      span.textContent = w.word;
+      span.className = 'word cursor-pointer rounded-lg inline-flex flex-col items-center justify-end select-none' + (isRep ? ' repeat-flagged' : '');
+      span.title = `Ayah ${w.aya}, Word ${wordNum} (${w.word})`;
+      
+      const numSpan = document.createElement('span');
+      numSpan.className = 'word-num';
+      numSpan.textContent = String(wordNum);
+      span.appendChild(numSpan);
+
+      const textSpan = document.createElement('span');
+      textSpan.className = 'word-text';
+      textSpan.textContent = w.word;
+      span.appendChild(textSpan);
+
       span.addEventListener('click', () => {
         if (firstCueStart[d] !== undefined) {
           els.audio.currentTime = firstCueStart[d];
@@ -409,6 +721,7 @@
     if (ayaWrap && currentAya !== null) {
       const marker = document.createElement('span');
       marker.className = 'ayah-end-marker';
+      marker.title = `Ayah ${currentAya}`;
       marker.textContent = `\u06DD${toArabicIndicDigits(currentAya)}`;
       ayaWrap.appendChild(marker);
     }
@@ -446,10 +759,10 @@
       els.repeatExplorerCount.textContent = repeatSites.length;
       els.repeatExplorerList.innerHTML = '';
 
-      repeatSites.forEach((s, idx) => {
+      repeatSites.forEach((s) => {
         const btn = document.createElement('button');
-        btn.className = 'inline-flex items-center gap-1 text-xs bg-white/90 hover:bg-amber-100 border border-amber-300 rounded px-2 py-1 text-amber-900 transition-colors shadow-2xs font-amiri';
-        btn.innerHTML = `<span class="font-mono text-[10px] text-amber-600">${formatSec(s.start)}</span> <span class="font-bold">${s.phrase}</span>`;
+        btn.className = 'inline-flex items-center gap-1 text-xs bg-white/90 dark:bg-stone-900/90 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-700/70 rounded px-2 py-1 text-amber-900 dark:text-amber-200 transition-colors shadow-2xs font-amiri';
+        btn.innerHTML = `<span class="font-mono text-[10px] text-amber-600 dark:text-amber-400">${formatSec(s.start)}</span> <span class="font-bold">${s.phrase}</span>`;
         btn.addEventListener('click', () => {
           els.audio.currentTime = Math.max(0, s.start - REPEAT_JUMP_LEAD_SEC);
           els.audio.play().catch(() => {});
@@ -461,26 +774,62 @@
     }
   }
 
-  function formatSec(s) {
-    const m = Math.floor(s / 60);
+  function formatSec(s, forceHours = false) {
+    if (isNaN(s) || s < 0) s = 0;
+    const hrs = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
     const sec = Math.floor(s % 60);
+    if (hrs > 0 || forceHours) {
+      return `${hrs}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    }
     return `${m}:${String(sec).padStart(2, '0')}`;
   }
 
   function updateTimelinePlayhead() {
     const dur = totalDuration > 0 ? totalDuration : (words.length > 0 ? words[words.length - 1].end : 1);
-    const pct = dur > 0 ? Math.min(100, Math.max(0, (els.audio.currentTime / dur) * 100)) : 0;
+    const cur = els.audio.currentTime || 0;
+    const pct = dur > 0 ? Math.min(100, Math.max(0, (cur / dur) * 100)) : 0;
     els.timelinePlayhead.style.left = `${pct}%`;
+
+    const hasHours = dur >= 3600;
+    if (els.currentTimeDisplay) {
+      els.currentTimeDisplay.textContent = formatSec(cur, hasHours);
+    }
+    if (els.totalTimeDisplay) {
+      els.totalTimeDisplay.textContent = formatSec(dur, hasHours);
+    }
+    if (els.remainingTimeDisplay) {
+      const rem = Math.max(0, dur - cur);
+      els.remainingTimeDisplay.textContent = `-${formatSec(rem, hasHours)}`;
+    }
   }
 
   function findWordIndexAtTime(t) {
+    if (!words || words.length === 0) return -1;
+    if (t < words[0].start - 0.5) return -1;
+    if (t >= words[words.length - 1].end) return words.length - 1;
+
     let lo = 0, hi = words.length - 1;
+    let best = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
       const w = words[mid];
-      if (t < w.start) hi = mid - 1;
-      else if (t >= w.end) lo = mid + 1;
-      else return mid;
+      if (t >= w.start) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (best >= 0) {
+      const cur = words[best];
+      // Keep active word highlighted during intra-ayah gaps until the next word starts
+      const nextStart = (best + 1 < words.length && words[best + 1].aya === cur.aya)
+        ? words[best + 1].start
+        : (cur.end + 0.8);
+      if (t < nextStart) {
+        return best;
+      }
     }
     return -1;
   }
@@ -511,7 +860,8 @@
     currentIdx = -1;
     renderText();
     renderTimeline();
-    els.status.innerHTML = `<span><strong class="text-stone-700">${words.length}</strong> words loaded, <strong class="text-amber-700">${repeatSites.length}</strong> repeat site(s) — <code class="bg-stone-100 px-1 rounded">${sourceLabel}</code></span>`;
+    updateTimelinePlayhead();
+    els.status.innerHTML = `<span><strong class="text-stone-800 dark:text-stone-200">${words.length}</strong> words loaded, <strong class="text-amber-700 dark:text-amber-400">${repeatSites.length}</strong> repeat site(s) — <code class="bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 px-1 py-0.5 rounded">${sourceLabel}</code></span>`;
   }
 
   function loadCustomAudioFile(file) {
@@ -520,46 +870,204 @@
     els.audio.src = url;
     els.audio.load();
     els.audioFileLabel.textContent = file.name;
-    els.status.innerHTML = `<span>Audio loaded: <code class="bg-stone-100 px-1 rounded">${file.name}</code></span>`;
+    els.status.innerHTML = `<span>Audio loaded: <code class="bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 px-1 py-0.5 rounded">${file.name}</code></span>`;
+  }
+
+  // --- Protobuf Decoder for Surah .pb files ---
+  class PbReader {
+    constructor(buf) {
+      this.buf = buf;
+      this.pos = 0;
+    }
+    hasMore() { return this.pos < this.buf.length; }
+    readVarint() {
+      let res = 0, shift = 0;
+      while (this.pos < this.buf.length) {
+        const b = this.buf[this.pos++];
+        res += (b & 0x7f) * Math.pow(2, shift);
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+      }
+      return res;
+    }
+    readBytes(len) {
+      const slice = this.buf.slice(this.pos, this.pos + len);
+      this.pos += len;
+      return slice;
+    }
+    readString(len) {
+      const slice = this.readBytes(len);
+      return new TextDecoder('utf-8').decode(slice);
+    }
+    skipField(wireType) {
+      if (wireType === 0) this.readVarint();
+      else if (wireType === 2) {
+        const len = this.readVarint();
+        this.pos += len;
+      } else if (wireType === 1) this.pos += 8;
+      else if (wireType === 5) this.pos += 4;
+      else throw new Error('Unsupported wire type: ' + wireType);
+    }
+  }
+
+  function parseWordPb(buf) {
+    const reader = new PbReader(buf);
+    let wordIndex = 0, text = '', startTime = 0, endTime = 0;
+    while (reader.hasMore()) {
+      const tag = reader.readVarint();
+      const fieldNum = tag >> 3;
+      const wireType = tag & 0x07;
+      if (fieldNum === 1 && wireType === 0) wordIndex = reader.readVarint();
+      else if (fieldNum === 2 && wireType === 2) text = reader.readString(reader.readVarint());
+      else if (fieldNum === 3 && wireType === 0) startTime = reader.readVarint();
+      else if (fieldNum === 4 && wireType === 0) endTime = reader.readVarint();
+      else reader.skipField(wireType);
+    }
+    return { wordIndex, text, startTime, endTime };
+  }
+
+  function parseAyahPb(buf) {
+    const reader = new PbReader(buf);
+    let key = '';
+    const words = [];
+    while (reader.hasMore()) {
+      const tag = reader.readVarint();
+      const fieldNum = tag >> 3;
+      const wireType = tag & 0x07;
+      if (fieldNum === 1 && wireType === 2) {
+        key = reader.readString(reader.readVarint());
+      } else if (fieldNum === 2 && wireType === 2) {
+        const wordsListBytes = reader.readBytes(reader.readVarint());
+        const wReader = new PbReader(wordsListBytes);
+        while (wReader.hasMore()) {
+          const wTag = wReader.readVarint();
+          const wField = wTag >> 3;
+          const wType = wTag & 0x07;
+          if (wField === 1 && wType === 2) {
+            const wBytes = wReader.readBytes(wReader.readVarint());
+            words.push(parseWordPb(wBytes));
+          } else {
+            wReader.skipField(wType);
+          }
+        }
+      } else {
+        reader.skipField(wireType);
+      }
+    }
+    return { key, words };
+  }
+
+  function parseSurahPb(buf) {
+    const reader = new PbReader(buf);
+    let surahId = 0, totalDurationMs = 0;
+    const verses = [];
+    while (reader.hasMore()) {
+      const tag = reader.readVarint();
+      const fieldNum = tag >> 3;
+      const wireType = tag & 0x07;
+      if (fieldNum === 1 && wireType === 0) {
+        surahId = reader.readVarint();
+      } else if (fieldNum === 2 && wireType === 0) {
+        totalDurationMs = reader.readVarint();
+      } else if (fieldNum === 3 && wireType === 2) {
+        const len = reader.readVarint();
+        const ayahSlice = reader.readBytes(len);
+        const v = parseAyahPb(ayahSlice);
+        verses.push(v);
+      } else {
+        reader.skipField(wireType);
+      }
+    }
+    return { surahId, totalDurationMs, verses };
+  }
+
+  function parseJsonOrSrtText(text) {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      const sanitized = text
+        .replace(/:\s*Infinity\b/g, ': null')
+        .replace(/:\s*-Infinity\b/g, ': null')
+        .replace(/:\s*NaN\b/g, ': null');
+      const json = JSON.parse(sanitized);
+      let list = [];
+      if (Array.isArray(json)) {
+        list = json;
+      } else if (json.verses && Array.isArray(json.verses)) {
+        for (const v of json.verses) {
+          const ayaNum = v.verseId ?? Number((v.key || '1:1').split(':')[1]) ?? 1;
+          const suraNum = json.metadata?.surah_id ?? Number((v.key || '1:1').split(':')[0]) ?? 1;
+          const seenIndices = new Set();
+          let prevWi = 0;
+          for (const w of (v.segments || v.words || [])) {
+            const wi = w.wordIndex !== undefined ? Number(w.wordIndex) : (prevWi + 1);
+            let isRepeat = Boolean(w.is_repeat);
+            if (w.is_repeat === undefined) {
+              if (seenIndices.has(wi) || (wi <= prevWi && prevWi > 0) || w.confidence === 0.9) {
+                isRepeat = true;
+              }
+            }
+            seenIndices.add(wi);
+            prevWi = wi;
+            list.push({
+              word: w.text || w.word,
+              start: (w.startTime ?? w.start ?? 0) > 1000 ? (w.startTime / 1000) : (w.startTime ?? w.start),
+              end: (w.endTime ?? w.end ?? 0) > 1000 ? (w.endTime / 1000) : (w.endTime ?? w.end),
+              aya: ayaNum,
+              sura: suraNum,
+              wi: wi,
+              is_repeat: isRepeat,
+            });
+          }
+        }
+      } else if (json.records || json.cues) {
+        list = json.records || json.cues;
+      }
+      return list;
+    }
+    return parseSrtText(text);
   }
 
   async function loadCustomAlignmentFile(file) {
     if (!file) return;
-    els.status.innerHTML = `<span>Parsing <code class="bg-stone-100 px-1 rounded">${file.name}</code>…</span>`;
-    const text = await file.text();
+    els.status.innerHTML = `<span>Parsing <code class="bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 px-1 py-0.5 rounded">${file.name}</code>…</span>`;
     els.jsonFileLabel.textContent = file.name;
     try {
-      if (file.name.endsWith('.json') || text.trim().startsWith('[') || text.trim().startsWith('{')) {
-        const sanitized = text
-          .replace(/:\s*Infinity\b/g, ': null')
-          .replace(/:\s*-Infinity\b/g, ': null')
-          .replace(/:\s*NaN\b/g, ': null');
-        const json = JSON.parse(sanitized);
-        let list = [];
-        if (Array.isArray(json)) {
-          list = json;
-        } else if (json.verses && Array.isArray(json.verses)) {
-          for (const v of json.verses) {
-            for (const w of (v.words || [])) {
-              list.push({
-                word: w.text || w.word,
-                start: (w.startTime ?? w.start ?? 0) > 1000 ? (w.startTime / 1000) : (w.startTime ?? w.start),
-                end: (w.endTime ?? w.end ?? 0) > 1000 ? (w.endTime / 1000) : (w.endTime ?? w.end),
-                aya: v.verseId ?? v.aya ?? 1,
-                sura: json.metadata?.surah_id ?? 1
-              });
+      if (file.name.endsWith('.pb') || file.type === 'application/x-protobuf' || file.type === 'application/octet-stream') {
+        const arrayBuf = await file.arrayBuffer();
+        const parsed = parseSurahPb(new Uint8Array(arrayBuf));
+        const list = [];
+        for (const v of parsed.verses) {
+          const ayaNum = parseInt((v.key || '1:1').split(':')[1] || '1', 10);
+          const suraNum = parsed.surahId || parseInt((v.key || '1:1').split(':')[0] || '1', 10);
+          const seenIndices = new Set();
+          let prevWi = 0;
+          for (const w of v.words) {
+            const wi = w.wordIndex || (prevWi + 1);
+            let isRepeat = false;
+            if (seenIndices.has(wi) || (wi <= prevWi && prevWi > 0)) {
+              isRepeat = true;
             }
+            seenIndices.add(wi);
+            prevWi = wi;
+            list.push({
+              word: w.text,
+              start: w.startTime / 1000,
+              end: w.endTime / 1000,
+              aya: ayaNum,
+              sura: suraNum,
+              wi: wi,
+              is_repeat: isRepeat,
+            });
           }
-        } else if (json.records || json.cues) {
-          list = json.records || json.cues;
         }
         applyAlignmentRecords(list, file.name);
       } else {
-        const list = parseSrtText(text);
+        const text = await file.text();
+        const list = parseJsonOrSrtText(text);
         applyAlignmentRecords(list, file.name);
       }
     } catch (err) {
-      els.status.innerHTML = `<span class="text-rose-600">Failed to parse ${file.name}: ${err.message}</span>`;
+      els.status.innerHTML = `<span class="text-rose-600 dark:text-rose-400">Failed to parse ${file.name}: ${err.message}</span>`;
     }
   }
 
@@ -577,6 +1085,11 @@
       els.audio.currentTime = Math.max(0, target.start - REPEAT_JUMP_LEAD_SEC);
       els.audio.play().catch(() => {});
     }
+  }
+
+  function toggleWordNumbers() {
+    const isChecked = els.wordNumbersToggle ? els.wordNumbersToggle.checked : !els.text.classList.contains('hide-word-numbers');
+    setWordNumbersVisible(!isChecked);
   }
 
   els.speedBtn.addEventListener('click', () => {
@@ -613,9 +1126,39 @@
     for (const f of e.dataTransfer.files) {
       if (f.type.startsWith('audio/') || /\.(mp3|wav|opus|m4a|flac|ogg)$/i.test(f.name)) {
         loadCustomAudioFile(f);
-      } else if (/\.(json|srt)$/i.test(f.name)) {
+      } else if (/\.(json|pb|srt)$/i.test(f.name)) {
         loadCustomAlignmentFile(f);
       }
+    }
+  });
+
+  // Global Keyboard Shortcuts
+  window.addEventListener('keydown', (e) => {
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (els.audio.paused) els.audio.play().catch(() => {});
+      else els.audio.pause();
+    } else if (e.code === 'ArrowLeft') {
+      e.preventDefault();
+      els.audio.currentTime = Math.max(0, els.audio.currentTime - 5);
+    } else if (e.code === 'ArrowRight') {
+      e.preventDefault();
+      els.audio.currentTime = Math.min(els.audio.duration || 0, els.audio.currentTime + 5);
+    } else if (e.key === 'j' || e.key === 'J') {
+      jumpToRepeat(1);
+    } else if (e.key === 'k' || e.key === 'K') {
+      jumpToRepeat(-1);
+    } else if (e.key === 'd' || e.key === 'D') {
+      toggleTheme();
+    } else if (e.key === 'w' || e.key === 'W') {
+      toggleWordNumbers();
+    } else if (e.key === 's' || e.key === 'S') {
+      if (els.autoscroll) els.autoscroll.checked = !els.autoscroll.checked;
+    } else if (e.key === '[' || e.key === ']') {
+      speedIdx = (speedIdx + (e.key === ']' ? 1 : SPEEDS.length - 1)) % SPEEDS.length;
+      els.audio.playbackRate = SPEEDS[speedIdx];
+      els.speedBtn.textContent = `${SPEEDS[speedIdx].toFixed(2).replace(/0$/, '')}x`;
     }
   });
 
@@ -635,6 +1178,79 @@
 
   els.prevRepeatBtn.addEventListener('click', () => jumpToRepeat(-1));
   els.nextRepeatBtn.addEventListener('click', () => jumpToRepeat(1));
+
+  // Handle URL Query Parameters (e.g. ?audio=...&align=... or ?audio=...&pb=...)
+  (() => {
+    const params = new URLSearchParams(window.location.search);
+    const audioUrl = params.get('audio');
+    const alignUrl = params.get('align') || params.get('pb') || params.get('json') || params.get('srt');
+
+    if (audioUrl) {
+      els.audio.src = audioUrl;
+      els.audio.load();
+      els.audioFileLabel.textContent = audioUrl.split('/').pop() || 'Audio stream';
+      els.status.innerHTML = `<span>Loaded audio from URL: <code class="bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 px-1 py-0.5 rounded">${audioUrl}</code></span>`;
+    }
+
+    if (alignUrl) {
+      els.status.innerHTML = `<span>Fetching alignment data from <code class="bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 px-1 py-0.5 rounded">${alignUrl}</code>…</span>`;
+      const fname = alignUrl.split('/').pop() || 'alignment';
+      els.jsonFileLabel.textContent = fname;
+
+      if (alignUrl.endsWith('.pb')) {
+        fetch(alignUrl)
+          .then(res => {
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+            return res.arrayBuffer();
+          })
+          .then(buf => {
+            const parsed = parseSurahPb(new Uint8Array(buf));
+            const list = [];
+            for (const v of parsed.verses) {
+              const ayaNum = parseInt((v.key || '1:1').split(':')[1] || '1', 10);
+              const suraNum = parsed.surahId || parseInt((v.key || '1:1').split(':')[0] || '1', 10);
+              const seenIndices = new Set();
+              let prevWi = 0;
+              for (const w of v.words) {
+                const wi = w.wordIndex || (prevWi + 1);
+                let isRepeat = false;
+                if (seenIndices.has(wi) || (wi <= prevWi && prevWi > 0)) {
+                  isRepeat = true;
+                }
+                seenIndices.add(wi);
+                prevWi = wi;
+                list.push({
+                  word: w.text,
+                  start: w.startTime / 1000,
+                  end: w.endTime / 1000,
+                  aya: ayaNum,
+                  sura: suraNum,
+                  wi: wi,
+                  is_repeat: isRepeat,
+                });
+              }
+            }
+            applyAlignmentRecords(list, fname);
+          })
+          .catch(err => {
+            els.status.innerHTML = `<span class="text-rose-600 dark:text-rose-400">Failed to load ${fname}: ${err.message}</span>`;
+          });
+      } else {
+        fetch(alignUrl)
+          .then(res => {
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+            return res.text();
+          })
+          .then(text => {
+            const list = parseJsonOrSrtText(text);
+            applyAlignmentRecords(list, fname);
+          })
+          .catch(err => {
+            els.status.innerHTML = `<span class="text-rose-600 dark:text-rose-400">Failed to load ${fname}: ${err.message}</span>`;
+          });
+      }
+    }
+  })();
 })();
 </script>
 </body>
