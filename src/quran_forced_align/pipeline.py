@@ -450,7 +450,7 @@ def _align_from_log_probs(
     repeat_events.sort(key=lambda ev: ev["start"])
 
     # 4. Optimal canonical path selection
-    cues, finalized_events = select_optimal_canonical_path(cues, repeat_events, log_probs, seconds_per_frame)
+    canonical_cues, finalized_events = select_optimal_canonical_path(cues, repeat_events, log_probs, seconds_per_frame)
     t5_elapsed = time.perf_counter() - t5_start
     log(f"      Repeat detection complete: {len(finalized_events)} repeat event(s) confirmed [{t5_elapsed:.3f}s]")
 

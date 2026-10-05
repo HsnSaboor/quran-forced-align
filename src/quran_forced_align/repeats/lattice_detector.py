@@ -27,6 +27,7 @@ import numpy as np
 
 from ..constants import DEFAULT_MAX_REPEAT_WINDOW_WORDS
 from ..decode import _collapse_ctc_ids, token_id_levenshtein_ratio
+from ..trellis import avg_logprob_along_path
 from .candidate import _repeat_window_candidate, build_phrase_ids
 
 logger = logging.getLogger("quran_forced_align.repeats.lattice_detector")
@@ -152,17 +153,14 @@ def scan_backward_path_candidates(
             inst1_start = cues[phrase_indices[0]]["start_frame"]
             inst1_end = curr_end_frame
 
-            # Window for testing repeat: from inst1_start through search_end_frame
+            # Window for testing repeat: from inst1_start strictly through search_end_frame (bounded by word i+1)
             test_window_start = inst1_start
-            test_window_end = min(
-                log_probs.shape[0] - 1,
-                max(search_end_frame, inst1_end + int(3.5 / seconds_per_frame))
-            )
+            test_window_end = min(log_probs.shape[0] - 1, search_end_frame)
 
             # Minimum word duration threshold (at least 3 frames per word)
             min_dur_frames = max(3, int(0.08 / seconds_per_frame))
 
-            # Run doubled-phrase local Viterbi over this window
+            # Run doubled-phrase local Viterbi over this bounded window
             cand_result = _repeat_window_candidate(
                 engine=engine,
                 word_indices=phrase_indices,
@@ -178,17 +176,66 @@ def scan_backward_path_candidates(
             if cand_result is None:
                 continue
 
-            c1_spans, c2_spans = cand_result[0], cand_result[1]
-            c1_start, c1_end = c1_spans[1] + test_window_start, c1_spans[2] + test_window_start
-            c2_start, c2_end = c2_spans[1] + test_window_start, c2_spans[2] + test_window_start
+            c1_start = cand_result["copy1_start_local"] + test_window_start
+            c1_end = cand_result["copy1_end_local"] + test_window_start
+            c2_start = cand_result["copy2_start_local"] + test_window_start
+            c2_end = cand_result["copy2_end_local"] + test_window_start
 
-            # Calculate inter-instance pause
+            # Calculate inter-instance pause and durations
             pause_sec = max(0.0, (c2_start - c1_end) * seconds_per_frame)
+            c1_dur = (c1_end - c1_start) * seconds_per_frame
+            c2_dur = (c2_end - c2_start) * seconds_per_frame
+            dur_diff_ratio = abs(c1_dur - c2_dur) / max(c1_dur, c2_dur)
 
             # CTC alignment score: normalized average likelihood of both copies
-            avg_lp1 = cand_result[2] if len(cand_result) > 2 else -1.0
-            avg_lp2 = cand_result[3] if len(cand_result) > 3 else -1.0
-            ctc_score = float(np.exp(min(0.0, max(-5.0, (avg_lp1 + avg_lp2) / 2.0))))
+            avg_lp1 = avg_logprob_along_path(
+                cand_result["window_log_probs"],
+                cand_result["ext"],
+                cand_result["path"],
+                cand_result["copy1_start_local"],
+                cand_result["copy1_end_local"],
+            )
+            avg_lp2 = avg_logprob_along_path(
+                cand_result["window_log_probs"],
+                cand_result["ext"],
+                cand_result["path"],
+                cand_result["copy2_start_local"],
+                cand_result["copy2_end_local"],
+            )
+
+            # Calibrated plausibility gates learned from Surah 4:
+            # 1. Canonical fidelity: copy 1 must not be distorted (avg_lp1 >= -0.35)
+            # 2. Spoken repetition likelihood: copy 2 must have authentic speech emissions (avg_lp2 >= -2.85)
+            # 3. Duration plausibility and reasonable symmetry
+            if avg_lp1 < -0.35 or avg_lp2 < -2.85 or pause_sec < -0.04:
+                continue
+            if c1_dur < 0.12 * k or c2_dur < 0.12 * k:
+                continue
+            if dur_diff_ratio > 0.40 and k >= 2:
+                continue
+
+            # 4. Anti-sliver gate: reject candidates where any repeated word in copy 2 is an artificial sliver
+            has_sliver = False
+            for j in phrase_indices:
+                s2_start, s2_end, _ = cand_result["per_word_copy2"][j]
+                s1_start, s1_end, _ = cand_result["per_word_copy1"][j]
+                w2_dur = (s2_end - s2_start) * seconds_per_frame
+                w1_dur = (s1_end - s1_start) * seconds_per_frame
+                if w2_dur < 0.20 and w1_dur >= 0.25:
+                    has_sliver = True
+                    break
+                if w2_dur / max(0.04, w1_dur) < 0.35:
+                    has_sliver = True
+                    break
+            if has_sliver:
+                continue
+
+            # 5. Anti-false-positive for single-word repeats (k=1): require substantial utterance and pause
+            if k == 1:
+                if pause_sec < 0.30 or c1_dur < 0.50 or c2_dur < 0.50 or avg_lp2 < -1.80:
+                    continue
+
+            ctc_score = float(np.exp(min(0.0, max(-5.0, avg_lp2))) * max(0.1, 1.0 - dur_diff_ratio))
 
             # Calculate acoustic feature similarity between instance 1 and instance 2
             sim_score = compute_acoustic_similarity(
