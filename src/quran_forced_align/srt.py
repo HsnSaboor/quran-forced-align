@@ -111,6 +111,7 @@ def build_rich_records(cues, seconds_per_frame, combined_token_ids, id2tok, stri
             "aya": c["aya"],
             "word_idx": c.get("word_idx"),
             "is_repeat": c["is_repeat"],
+            "repeat_stage": c.get("repeat_stage"),
             "avg_logprob": _json_safe_float(c.get("avg_logprob")),
             "min_decision_margin": _json_safe_float(c.get("min_decision_margin")),
             "low_confidence": c["low_confidence"],

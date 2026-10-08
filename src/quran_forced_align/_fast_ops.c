@@ -356,20 +356,51 @@ int fast_detect_and_fix_repeats_engine(
         
         if (!is_anomalous && !has_pause_gap) continue;
 
+        // Already-modeled guard: if the K words ending at i are immediately
+        // followed (in cue order, same ayah) by the SAME token sequence,
+        // the reference already contains the second copy (e.g. an oracle
+        // doubled reference) -- there is no undiscovered repeat to find.
+        // Without this, the gate re-fires on the known copy and splices
+        // phantom cues. Checked per-K inside the sweep (phrase grows as
+        // K grows, so the check must follow K, not the anchor).
         int words_left_in_aya = 1;
-        while (i - words_left_in_aya >= 0 && 
-               cue_ayas[i - words_left_in_aya] == cue_ayas[i] && 
+        while (i - words_left_in_aya >= 0 &&
+               cue_ayas[i - words_left_in_aya] == cue_ayas[i] &&
                cue_suras[i - words_left_in_aya] == cue_suras[i]) {
             words_left_in_aya++;
         }
+        // No arbitrary ceiling on K: the ayah boundary is the natural limit
+        // (a genuine repeat never spans into a different ayah).
+        // `max_repeat_window_words` remains as an explicit user override.
         int k_max = words_left_in_aya;
-        if (k_max > 6) k_max = 6;
         if (max_repeat_window_words > 0 && k_max > max_repeat_window_words) {
             k_max = max_repeat_window_words;
         }
 
         int window_end = (i < num_cues - 1) ? (cue_starts[i + 1] - 1) : (T - 1);
         if (window_end > T - 1) window_end = T - 1;
+        // Forward extension for absorbed echoes: when cue i is a stretched
+        // single cue (high-ratio anomaly) whose following gap holds speech,
+        // the repeated second pass lives between cue end and the next cues.
+        // window_end_ext reaches the last same-ayah cue's end so the doubled
+        // hypothesis can cover both passes.
+        int words_right_in_aya = 1;
+        while (i + words_right_in_aya < num_cues &&
+               cue_ayas[i + words_right_in_aya] == cue_ayas[i] &&
+               cue_suras[i + words_right_in_aya] == cue_suras[i]) {
+            words_right_in_aya++;
+        }
+        int fwd_end_cue = i + words_right_in_aya - 1;
+        int window_end_fwd = cue_ends[fwd_end_cue];
+        if (window_end_fwd > T - 1) window_end_fwd = T - 1;
+        int window_end_ext = window_end_fwd;
+        if (window_end_ext < window_end) window_end_ext = window_end;
+
+        if (getenv("QFA_DEBUG_ANCHOR") != NULL) {
+            fprintf(stderr, "[gate5] SETUP i=%d wleft=%d wright=%d kmax=%d we=%d weext=%d T=%d\n",
+                    i, words_left_in_aya, words_right_in_aya, k_max,
+                    window_end, window_end_ext, T);
+        }
         
         int j0_widest = i - k_max + 1;
         int window_start_widest = (j0_widest > 0) ? (cue_ends[j0_widest - 1] + 1) : (cue_starts[j0_widest] - margin_val);
@@ -380,6 +411,8 @@ int fast_detect_and_fix_repeats_engine(
         int best_K = 0;
         float best_score = -1e30f;
         int best_window_start = 0;
+        int best_window_end = 0;
+        int best_path_len = 0;
 
         for (int K = 1; K <= k_max; ++K) {
             int j0 = i - K + 1;
@@ -389,6 +422,45 @@ int fast_detect_and_fix_repeats_engine(
                 if (consumed[j]) { overlap = 1; break; }
             }
             if (overlap) break;
+
+            // Already-modeled guard (see above): skip K whose phrase
+            // appears as a contiguous token subsequence in the near
+            // lookahead (next K+2 cues, same ayah). Covers both the
+            // exactly-adjacent second copy (oracle doubled references)
+            // and shifted containments (phrase at offset 1..2). A genuine
+            // undiscovered repeat has no such clean copy following it.
+            {
+                int _follow = 0;
+                int _plen = 0;
+                for (int m = 0; m < K; ++m) {
+                    int a = i - K + 1 + m;
+                    if (a < 0) { _plen = -1; break; }
+                    _plen += cue_token_counts[a];
+                }
+                if (_plen > 0) {
+                    for (int t = i + 1; t <= i + K + 1 && t + K - 1 < num_cues && !_follow; ++t) {
+                        int _ok = 1;
+                        for (int m = 0; m < K; ++m) {
+                            if (cue_ayas[t + m] != cue_ayas[i] ||
+                                cue_suras[t + m] != cue_suras[i]) { _ok = 0; break; }
+                        }
+                        if (!_ok) continue;
+                        for (int m = 0; m < K && _ok; ++m) {
+                            int a = i - K + 1 + m;
+                            int na = cue_token_counts[a], nb = cue_token_counts[t + m];
+                            if (na != nb) { _ok = 0; break; }
+                            int oa = cue_token_offsets[a], ob = cue_token_offsets[t + m];
+                            for (int c = 0; c < na; ++c) {
+                                if (combined_token_ids[oa + c] != combined_token_ids[ob + c]) {
+                                    _ok = 0; break;
+                                }
+                            }
+                        }
+                        if (_ok) _follow = 1;
+                    }
+                }
+                if (_follow) continue;
+            }
 
             int window_start = (j0 > 0) ? (cue_ends[j0 - 1] + 1) : (cue_starts[j0] - margin_val);
             if (window_start < 0) window_start = 0;
@@ -499,10 +571,23 @@ int fast_detect_and_fix_repeats_engine(
                 for (int t = c2_st; t <= c2_en; ++t) {
                     w_sum2 += log_probs[(window_start + t) * V + ext2[path2[t]]];
                 }
+                // ...genuinely repeated: BOTH copies must carry real acoustic
+                // support, and they must AGREE. A stretched single utterance
+                // force-split across two copies fits one side well and the
+                // other poorly (or both mediocrely): reject when the copies
+                // differ by more than 1.0 nat, or when the weaker copy is a
+                // full 1.0 nat below the floor. (A true repeat sung twice
+                // matches the model about equally well both times.)
                 float w_avg1 = (float)(w_sum1 / d1);
                 float w_avg2 = (float)(w_sum2 / d2);
                 float w_bilat = (w_avg1 < w_avg2 ? w_avg1 : w_avg2);
+                float w_bilat_hi = (w_avg1 > w_avg2 ? w_avg1 : w_avg2);
                 if (w_bilat < confidence_floor - 0.75f) {
+                    word_failed = 1;
+                    break;
+                }
+                if (w_bilat_hi - w_bilat > 1.0f ||
+                    w_bilat < confidence_floor - 1.0f) {
                     word_failed = 1;
                     break;
                 }
@@ -514,21 +599,310 @@ int fast_detect_and_fix_repeats_engine(
             if (gap_frames <= gap_artifact_max_frames && margin_above_floor < gap_artifact_min_margin) continue;
             
             float cand_score = bilateral + (float)(ratio_doubled - ratio_single) * 0.1f;
-            if (cand_score > best_score) {
-                best_score = cand_score;
-                best_K = K;
-                best_window_start = window_start;
-                memcpy(best_path, path2, window_len * sizeof(int32_t));
+            // Verified-wide preference: every candidate here passed ALL
+            // gates, so each word has independent acoustic support in both
+            // copies. Prefer the span covering more verified words unless
+            // the narrower span is clearly better-fitting: wider wins when
+            // its bilateral is within 0.5 nats of best AND its free-decode
+            // margin is positive AND rd >= 0.5 (strong independent decode).
+            {
+                float _bil_gap = best_score - cand_score;
+                int _take = (cand_score > best_score + 1e-2f) ||
+                    (best_K > 0 && K > best_K &&
+                     (best_score - cand_score) < 0.5f &&
+                     (ratio_doubled - ratio_single) > 0.0f &&
+                     ratio_doubled >= 0.5f);
+                if (_take) {
+                    best_score = cand_score;
+                    best_K = K;
+                    if (getenv("QFA_DEBUG_ANCHOR") != NULL) {
+                        fprintf(stderr, "[gate5] i=%d K=%d ws=%d we=%d rd=%.4f rs=%.4f m=%+.4f bilat=%.3f floor=%.3f gap=%d NEWBEST\n",
+                                i, K, window_start, window_end, ratio_doubled, ratio_single,
+                                ratio_doubled - ratio_single, bilateral, confidence_floor,
+                                copy2_start_local - copy1_end_local);
+                    }
+                    best_window_start = window_start;
+                    best_window_end = window_end;
+                    memcpy(best_path, path2, window_len * sizeof(int32_t));
+                    best_path_len = window_len;
+                }
+            }
+        }
+
+        // Second pass with the forward-extended window (absorbed-echo case):
+        // when the second pass spills past the normal window_end, the
+        // wider phrase can only be seen in the extended window. Runs when
+        // the extension adds frames. Same gates, same scoring; cheap
+        // because it only runs when window_end_ext > window_end.
+        if (window_end_ext > window_end) {
+            for (int K = 1; K <= k_max; ++K) {
+                int j0 = i - K + 1;
+                if (j0 < 0) break;
+                int overlap = 0;
+                for (int j = j0; j < i; ++j) {
+                    if (consumed[j]) { overlap = 1; break; }
+                }
+                if (overlap) break;
+
+                int window_start = (j0 > 0) ? (cue_ends[j0 - 1] + 1) : (cue_starts[j0] - margin_val);
+                if (window_start < 0) window_start = 0;
+                if (window_end_ext <= window_start) continue;
+
+            // Already-modeled guard (see above): skip K whose phrase
+            // appears as a contiguous token subsequence in the near
+            // lookahead (next K+2 cues, same ayah). Covers both the
+            // exactly-adjacent second copy (oracle doubled references)
+            // and shifted containments (phrase at offset 1..2). A genuine
+            // undiscovered repeat has no such clean copy following it.
+            {
+                int _follow = 0;
+                int _plen = 0;
+                for (int m = 0; m < K; ++m) {
+                    int a = i - K + 1 + m;
+                    if (a < 0) { _plen = -1; break; }
+                    _plen += cue_token_counts[a];
+                }
+                if (_plen > 0) {
+                    for (int t = i + 1; t <= i + K + 1 && t + K - 1 < num_cues && !_follow; ++t) {
+                        int _ok = 1;
+                        for (int m = 0; m < K; ++m) {
+                            if (cue_ayas[t + m] != cue_ayas[i] ||
+                                cue_suras[t + m] != cue_suras[i]) { _ok = 0; break; }
+                        }
+                        if (!_ok) continue;
+                        for (int m = 0; m < K && _ok; ++m) {
+                            int a = i - K + 1 + m;
+                            int na = cue_token_counts[a], nb = cue_token_counts[t + m];
+                            if (na != nb) { _ok = 0; break; }
+                            int oa = cue_token_offsets[a], ob = cue_token_offsets[t + m];
+                            for (int c = 0; c < na; ++c) {
+                                if (combined_token_ids[oa + c] != combined_token_ids[ob + c]) {
+                                    _ok = 0; break;
+                                }
+                            }
+                        }
+                        if (_ok) _follow = 1;
+                    }
+                }
+                if (_follow) continue;
+            }
+
+                // Phase A (cheap, no forced-align): sweep the right edge in
+                // 25-frame steps, keep the we maximizing the free-decode
+                // MARGIN (rd-rs) subject to rd>=0.40. Margin (not raw rd)
+                // is the gate's real criterion; raw rd peaks at spurious
+                // edges where the collapse accidentally matches doubled.
+                int L0 = 0;
+                for (int j = j0; j <= i; ++j) {
+                    int offset = cue_token_offsets[j];
+                    int count = cue_token_counts[j];
+                    for (int c = 0; c < count; ++c) {
+                        phrase_ids[L0++] = combined_token_ids[offset + c];
+                    }
+                }
+                for (int c = 0; c < L0; ++c) {
+                    doubled_ids[c] = phrase_ids[c];
+                    doubled_ids[L0 + c] = phrase_ids[c];
+                }
+                int L0_doubled = 2 * L0;
+                int we_best = window_end;
+                double mg_best = -1e30;
+                {
+                    int we_step;
+                    for (we_step = window_end + 1; we_step <= window_end_ext; we_step += 25) {
+                        int wlen = we_step - window_start + 1;
+                        int dlen = fast_collapse_ctc_ids(full_greedy_ids + window_start, wlen, blank_id, decoded_ids);
+                        double rd_step = fast_token_id_levenshtein_ratio(decoded_ids, dlen, doubled_ids, L0_doubled, 0.0);
+                        double rs_step = fast_token_id_levenshtein_ratio(decoded_ids, dlen, phrase_ids, L0, 0.0);
+                        double mg_step = rd_step - rs_step;
+                        if (rd_step >= free_decode_min_ratio_doubled && mg_step > mg_best) {
+                            mg_best = mg_step; we_best = we_step;
+                        }
+                    }
+                    {
+                        int wlen = window_end_ext - window_start + 1;
+                        int dlen = fast_collapse_ctc_ids(full_greedy_ids + window_start, wlen, blank_id, decoded_ids);
+                        double rd_step = fast_token_id_levenshtein_ratio(decoded_ids, dlen, doubled_ids, L0_doubled, 0.0);
+                        double rs_step = fast_token_id_levenshtein_ratio(decoded_ids, dlen, phrase_ids, L0, 0.0);
+                        double mg_step = rd_step - rs_step;
+                        if (rd_step >= free_decode_min_ratio_doubled && mg_step > mg_best) {
+                            mg_best = mg_step; we_best = window_end_ext;
+                        }
+                    }
+                }
+                if (getenv("QFA_DEBUG_ANCHOR") != NULL && K >= 7 && K <= 9) {
+                    fprintf(stderr, "[phaseA] i=%d K=%d ws=%d we=%d weext=%d we_best=%d mg_best=%.4f\n",
+                            i, K, window_start, window_end, window_end_ext, we_best, mg_best);
+                }
+                // Phase B: full gate chain once at we_best via a LOCAL
+                // bound (never mutate window_end_ext: a `continue` below
+                // must not poison later K iterations).
+                int window_end_use = we_best;
+
+                int L = 0;
+                for (int j = j0; j <= i; ++j) {
+                    int offset = cue_token_offsets[j];
+                    int count = cue_token_counts[j];
+                    for (int c = 0; c < count; ++c) {
+                        phrase_ids[L++] = combined_token_ids[offset + c];
+                    }
+                }
+                for (int c = 0; c < L; ++c) {
+                    doubled_ids[c] = phrase_ids[c];
+                    doubled_ids[L + c] = phrase_ids[c];
+                }
+                int L_doubled = 2 * L;
+
+                const int32_t* window_ids = full_greedy_ids + window_start;
+                int window_len = window_end_use - window_start + 1;
+                int decoded_len = fast_collapse_ctc_ids(window_ids, window_len, blank_id, decoded_ids);
+
+                double ratio_doubled = fast_token_id_levenshtein_ratio(decoded_ids, decoded_len, doubled_ids, L_doubled, 0.0);
+                double ratio_single = fast_token_id_levenshtein_ratio(decoded_ids, decoded_len, phrase_ids, L, 0.0);
+
+                double min_margin = (K == 1) ? 0.05 : free_decode_min_margin;
+                int free_decode_pass = (ratio_doubled >= free_decode_min_ratio_doubled &&
+                                       (ratio_doubled - ratio_single) >= min_margin);
+                if (!free_decode_pass) continue;
+
+                int align_res = fast_ctc_forced_align(log_probs + window_start * V, window_len, V, doubled_ids, L_doubled, blank_id, path2);
+                if (align_res != 0) continue;
+
+                int num_states = 2 * L_doubled + 1;
+                for (int s = 0; s < num_states; ++s) {
+                    first_seen[s] = -1;
+                    last_seen[s] = -1;
+                }
+                for (int t = 0; t < window_len; ++t) {
+                    int s = path2[t];
+                    if (s >= 0 && s < num_states) {
+                        if (first_seen[s] == -1) first_seen[s] = t;
+                        last_seen[s] = t;
+                    }
+                }
+
+                int timing_failed = 0;
+                for (int s = 0; s < L; ++s) {
+                    if (first_seen[2*s+1] < 0 || last_seen[2*s+1] < 0) { timing_failed = 1; break; }
+                    if (first_seen[2*(L+s)+1] < 0 || last_seen[2*(L+s)+1] < 0) { timing_failed = 1; break; }
+                }
+                if (timing_failed) continue;
+
+                int copy1_start_local = first_seen[1];
+                int copy1_end_local = last_seen[2 * L - 1];
+                int copy2_start_local = first_seen[2 * L + 1];
+                int copy2_end_local = last_seen[4 * L - 1];
+
+                int copy1_dur = copy1_end_local - copy1_start_local + 1;
+                int copy2_dur = copy2_end_local - copy2_start_local + 1;
+                int timing_plausible = (copy2_start_local > copy1_end_local &&
+                                       copy1_dur >= min_word_dur_frames &&
+                                       copy2_dur >= min_word_dur_frames);
+                if (K == 1) {
+                    int cue_dur = cue_ends[i] - cue_starts[i] + 1;
+                    if (copy1_dur > 3 * cue_dur || copy2_dur > 3 * cue_dur) timing_plausible = 0;
+                }
+                if (!timing_plausible) continue;
+
+                for (int s = 0; s < L_doubled; ++s) {
+                    ext2[2*s] = blank_id;
+                    ext2[2*s+1] = doubled_ids[s];
+                }
+                ext2[2*L_doubled] = blank_id;
+
+                double sum1 = 0, sum2 = 0;
+                for (int t = copy1_start_local; t <= copy1_end_local; ++t) {
+                    sum1 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+                }
+                for (int t = copy2_start_local; t <= copy2_end_local; ++t) {
+                    sum2 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+                }
+                float avg1 = (float)(sum1 / copy1_dur);
+                float avg2 = (float)(sum2 / copy2_dur);
+                float bilateral = (avg1 < avg2 ? avg1 : avg2);
+                if (bilateral < confidence_floor) continue;
+
+                int word_failed = 0;
+                int tok_acc = 0;
+                for (int j = j0; j <= i; ++j) {
+                    int count = cue_token_counts[j];
+                    int c1_st = first_seen[2 * tok_acc + 1];
+                    int c1_en = last_seen[2 * (tok_acc + count - 1) + 1];
+                    int c2_st = first_seen[2 * (L + tok_acc) + 1];
+                    int c2_en = last_seen[2 * (L + tok_acc + count - 1) + 1];
+                    tok_acc += count;
+
+                    int d1 = c1_en - c1_st + 1;
+                    int d2 = c2_en - c2_st + 1;
+                    if (d1 < 1 || d2 < 1) { word_failed = 1; break; }
+
+                    double w_sum1 = 0, w_sum2 = 0;
+                    for (int t = c1_st; t <= c1_en; ++t) {
+                        w_sum1 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+                    }
+                    for (int t = c2_st; t <= c2_en; ++t) {
+                        w_sum2 += log_probs[(window_start + t) * V + ext2[path2[t]]];
+                    }
+                    float w_avg1 = (float)(w_sum1 / d1);
+                    float w_avg2 = (float)(w_sum2 / d2);
+                    float w_bilat = (w_avg1 < w_avg2 ? w_avg1 : w_avg2);
+                    float w_bilat_hi = (w_avg1 > w_avg2 ? w_avg1 : w_avg2);
+                    if (w_bilat < confidence_floor - 0.75f) {
+                        word_failed = 1;
+                        break;
+                    }
+                    if (w_bilat_hi - w_bilat > 1.0f ||
+                        w_bilat < confidence_floor - 1.0f) {
+                        word_failed = 1;
+                        break;
+                    }
+                }
+                if (word_failed) continue;
+
+                int gap_frames = copy2_start_local - copy1_end_local;
+                float margin_above_floor = bilateral - confidence_floor;
+                if (gap_frames <= gap_artifact_max_frames && margin_above_floor < gap_artifact_min_margin) continue;
+
+                float cand_score = bilateral + (float)(ratio_doubled - ratio_single) * 0.1f;
+                if (getenv("QFA_DEBUG_ANCHOR") != NULL) {
+                    fprintf(stderr, "[gate5x] i=%d K=%d ws=%d we=%d rd=%.4f rs=%.4f m=%+.4f bilat=%.3f floor=%.3f gap=%d score=%.3f%s\n",
+                            i, K, window_start, window_end_use, ratio_doubled, ratio_single,
+                            ratio_doubled - ratio_single, bilateral, confidence_floor,
+                            copy2_start_local - copy1_end_local, cand_score,
+                            (cand_score > best_score) ? " NEWBEST" : "");
+                }
+                {
+                    float _bil_gap = best_score - cand_score;
+                    (void)_bil_gap;
+                    int _take = (cand_score > best_score + 1e-2f) ||
+                        (best_K > 0 && K > best_K &&
+                         (best_score - cand_score) < 0.5f &&
+                         (ratio_doubled - ratio_single) > 0.0f &&
+                         ratio_doubled >= 0.5f);
+                    if (_take) {
+                        best_score = cand_score;
+                        best_K = K;
+                        best_window_start = window_start;
+                        best_window_end = window_end_use;
+                        memcpy(best_path, path2, window_len * sizeof(int32_t));
+                        best_path_len = window_len;
+                    }
+                }
             }
         }
         
         if (best_K > 0) {
+            if (getenv("QFA_DEBUG_ANCHOR") != NULL) {
+                fprintf(stderr, "[gate5] ANCHOR i=%d bestK=%d bestWS=%d bestWE=%d score=%.3f\n",
+                        i, best_K, best_window_start, best_window_end, best_score);
+            }
             out_K[i] = best_K;
             out_window_start[i] = best_window_start;
-            out_window_end[i] = window_end;
+            out_window_end[i] = best_window_end;
             out_path_offsets[i] = total_paths_len;
-            
-            int window_len = window_end - best_window_start + 1;
+
+            int window_len = best_window_end - best_window_start + 1;
+            if (window_len != best_path_len) window_len = best_path_len;
             out_path_lengths[i] = window_len;
             memcpy(out_paths + total_paths_len, best_path, window_len * sizeof(int32_t));
             total_paths_len += window_len;

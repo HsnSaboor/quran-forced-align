@@ -30,10 +30,21 @@ def detect_and_fix_repeats(
     confidence_margin=DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     max_repeat_window_words=None,
     max_passes=1,
+    enable_phon_hint=False,
+    seconds_per_frame=None,
 ):
+    """STEP-2 phonetic hint (gate-5 pause-vs-repeat disambiguation).
+
+    `enable_phon_hint=False` (default) is byte-identical to the historical
+    behavior: no hint is computed, cues are untouched, and the C engine
+    receives the same `confidence_floor`. Pass `enable_phon_hint=True`
+    (with the engine's `seconds_per_frame`, e.g. 0.04) to annotate each cue
+    with `cues[i]["phon_hint"]` (the `repeats/phon_hint.py` result dict)
+    and apply its bounded consumption (see `_detect_and_fix_repeats_pass`).
+    """
     if not cues:
         return cues
-    
+
     current_cues = cues
     for p in range(max_passes):
         fixed_cues = _detect_and_fix_repeats_pass(
@@ -50,6 +61,8 @@ def detect_and_fix_repeats(
             ayah_final_high_ratio_mult=ayah_final_high_ratio_mult,
             confidence_margin=confidence_margin,
             max_repeat_window_words=max_repeat_window_words,
+            enable_phon_hint=enable_phon_hint,
+            seconds_per_frame=seconds_per_frame,
         )
         if len(fixed_cues) == len(current_cues):
             break
@@ -72,6 +85,8 @@ def _detect_and_fix_repeats_pass(
     ayah_final_high_ratio_mult=DEFAULT_AYAH_FINAL_HIGH_RATIO_MULT,
     confidence_margin=DEFAULT_REPEAT_CONFIDENCE_MARGIN,
     max_repeat_window_words=DEFAULT_MAX_REPEAT_WINDOW_WORDS,
+    enable_phon_hint=False,
+    seconds_per_frame=None,
 ):
     low_ratio = anomaly_low_ratio
     high_ratio = anomaly_high_ratio
@@ -340,7 +355,40 @@ def _detect_and_fix_repeats_pass(
     normal_avgs = [fast_avg_logprob(c["start_frame"], c["end_frame"]) for c in cues if not is_anomalous(c)]
     baseline_avg = float(np.median(normal_avgs)) if normal_avgs else 0.0
     confidence_floor = baseline_avg - confidence_margin
-    
+
+    # STEP-2 phonetic hint (default OFF -- byte-identical when disabled).
+    # Computed Python-side AFTER confidence_floor and BEFORE the C call, per
+    # STEP2_REPORT.md section 1. When enabled, each cue gets
+    # `cues[i]["phon_hint"]` (the `repeats/phon_hint.py` result dict for that
+    # word, with gap_after measured to the NEXT cue's start in ms and dur in
+    # frames). The scalar `confidence_floor` passed to the C engine is
+    # UNCHANGED -- the C engine (`_fast_ops.c`) takes no per-word input, so
+    # the bounded bonus is consumed purely in the Python `accepted_fixes`
+    # loop below (a hint-positive candidate whose margin above the floor is
+    # tighter than PAUSAL_BONUS_NATS additional nats is left unflagged,
+    # since the hint can only break near-ties, never rescue deep failures).
+    phon_hints = None
+    if enable_phon_hint:
+        from .phon_hint import phon_hint
+
+        spf = seconds_per_frame if seconds_per_frame is not None else 0.04
+        phon_hints = []
+        for i, c in enumerate(cues):
+            if i + 1 < num_cues:
+                gap_frames = cues[i + 1]["start_frame"] - c["end_frame"]
+            else:
+                gap_frames = 0
+            gap_after_ms = max(0.0, float(gap_frames) * spf * 1000.0)
+            dur_frames = c["end_frame"] - c["start_frame"]
+            hint = phon_hint(
+                c.get("word", ""),
+                pause_after_ms=gap_after_ms,
+                measured_dur=float(dur_frames),
+                median_dur=float(median),
+            )
+            phon_hints.append(hint)
+            c["phon_hint"] = hint
+
     out_K = np.zeros(num_cues, dtype=np.int32)
     out_window_start = np.zeros(num_cues, dtype=np.int32)
     out_window_end = np.zeros(num_cues, dtype=np.int32)
@@ -400,6 +448,7 @@ def _detect_and_fix_repeats_pass(
             "start_frame": start_local + window_start,
             "end_frame": end_local + window_start,
             "is_repeat": is_repeat,
+            "repeat_stage": "c-engine" if is_repeat else None,
             "token_frame_spans": _shift_token_spans(token_spans_local, window_start),
             "avg_logprob": avg_logprob_along_path(
                 log_probs_np[window_start:window_start + len(path2)], ext2, path2, start_local, end_local
@@ -428,7 +477,44 @@ def _detect_and_fix_repeats_pass(
             ext2[-1] = blank_id
             
             first_seen, last_seen = frame_spans_from_path(path2, len(ext2))
-            
+
+            # STEP-2 hint consumption (only when enable_phon_hint=True):
+            # the C engine accepted this K-window against its scalar
+            # confidence_floor using WHOLE-window + per-word bilateral avgs
+            # over `log_probs_np[window_start:...]` -- all recomputable
+            # Python-side from the returned path. Recompute the window's
+            # bilateral minimum (same definition as the C gate:
+            # min(avg1, avg2) over the copy1/copy2 spans) and require
+            # margin_above_floor >= hint_bonus for a hint-positive trigger
+            # word. In other words the hint raises the effective floor by
+            # at most PAUSAL_BONUS_NATS (0.15) for a waqf-likely trigger:
+            # a candidate that cleared the C floor by LESS than the hint
+            # bonus at a pause site is exactly the near-tie the hint is
+            # allowed to break (STEP2_REPORT.md proposal option (b),
+            # "floor minus bonus" applied as a post-reject since the C
+            # entry point accepts only a scalar floor -- per-word floors
+            # would require touching `_fast_ops.c`, which is forbidden).
+            # Candidates clearing by MORE than the bonus, and all
+            # hint-negative candidates, are unaffected.
+            if phon_hints is not None:
+                hint = phon_hints[i]
+                if hint.get("pausal_likely"):
+                    L = len(doubled_ids) // 2
+                    n_states = len(ext2)
+                    win_lp = log_probs_np[window_start:window_start + len(path2)]
+                    c1_s = int(first_seen[1]) if n_states > 1 else -1
+                    c1_e = int(last_seen[2 * L - 1]) if n_states > 2 * L - 1 else -1
+                    c2_s = int(first_seen[2 * L + 1]) if n_states > 2 * L + 1 else -1
+                    c2_e = int(last_seen[4 * L - 1]) if n_states > 4 * L - 1 else -1
+                    avg1 = avg_logprob_along_path(win_lp, ext2, path2, c1_s, c1_e)
+                    avg2 = avg_logprob_along_path(win_lp, ext2, path2, c2_s, c2_e)
+                    bilateral = min(avg1, avg2)
+                    margin_above_floor = bilateral - confidence_floor
+                    if margin_above_floor < float(hint.get("bonus_nats", 0.0) or 0.0):
+                        # Waqf-likely trigger with a near-tie margin: leave
+                        # the word unflagged (do NOT splice a repeat).
+                        continue
+
             def positions_for(local_offset, count): return list(range(local_offset, local_offset + count))
             
             word_ntoks = [len(cues[j]["token_positions"]) for j in word_indices]
@@ -463,5 +549,273 @@ def _detect_and_fix_repeats_pass(
             fixed.append(_spliced_cue(orig, s2, e2, tok_spans2, window_start, ext2, path2, is_repeat=True))
             
     fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
-    
+
+    # Stage 2 (forward-anchored echo search): the C-engine sweep above looks
+    # BACKWARD from anomalous cues, but when a repeated second pass is fully
+    # absorbed into stretched main-pass cues, no single cue is anomalous at
+    # the right place and the backward window never covers the echo audio
+    # (e.g. Ghailan 6:70 w17-24: second pass at 1259-1266s absorbed, K=6
+    # flagged, laysa+laha missed). Here we anchor FORWARD: at every
+    # inter-word gap >= max(0.5s, median) with same-ayah words on both
+    # sides, test whether the post-gap audio re-sings the preceding phrase
+    # by forced-aligning the SINGLE K-phrase (K=2..10, ayah-bounded) against
+    # the post-gap window. Same bilateral/per-word/timing gates as the C
+    # path (floor, floor-0.75, min_word_dur); skips cues already consumed by
+    # stage 1. New repeat cues are spliced with is_repeat=True through the
+    # same _spliced_cue path.
+    import os as _os
+    if _os.environ.get("QFA_DISABLE_FORWARD", "") == "":
+        fixed = _forward_echo_pass(
+            cues, combined_token_ids,
+            blank_id, min_word_dur_frames, confidence_floor,
+            median, accepted_fixes, fixed,
+            log_probs_np, seconds_per_frame if seconds_per_frame is not None else 0.04,
+            token_frame_spans, _spliced_cue,
+            ext, path, fast_avg_logprob,
+        )
+
+    return fixed
+
+
+def _forward_echo_pass(
+    cues, combined_token_ids,
+    blank_id, min_word_dur_frames, confidence_floor,
+    median, accepted_fixes, fixed,
+    log_probs_np, seconds_per_frame,
+    token_frame_spans_fn, spliced_cue_fn,
+    ext_main, path_main, fast_avg_logprob_fn,
+):
+    """Forward-anchored repeat-echo search (stage 2, see caller)."""
+    from ..decode import fast_ctc_align_c
+    from ..trellis import build_ext as _build_ext
+
+    T = log_probs_np.shape[0]
+    consumed_idx = set()
+    for word_indices, _, _, _, _, _ in accepted_fixes.values():
+        consumed_idx.update(word_indices)
+    # cue positions may have shifted after splicing; work from the ORIGINAL
+    # cues list (pre-splice) for anchor geometry, then splice into fixed.
+    num_cues = len(cues)
+    median_frames = float(median) if median and median > 0 else 1.0
+    gap_thresh_frames = max(int(0.5 / seconds_per_frame), int(median_frames))
+
+    def _positions_for(local_offset, count):
+        return list(range(local_offset, local_offset + count))
+
+    for i in range(num_cues - 1):
+        gap = cues[i + 1]["start_frame"] - cues[i]["end_frame"]
+        if gap < gap_thresh_frames:
+            continue
+        if cues[i].get("sura") != cues[i + 1].get("sura") or \
+           cues[i].get("aya") != cues[i + 1].get("aya"):
+            continue
+        # K-word phrases ending at cue i (the pre-gap word), ayah-bounded.
+        k_max = 1
+        while (i - k_max + 1) >= 0 and \
+                cues[i - k_max + 1].get("aya") == cues[i].get("aya") and \
+                cues[i - k_max + 1].get("sura") == cues[i].get("sura"):
+            k_max += 1
+        k_max = max(1, k_max - 1)
+        k_max = min(k_max, 10)
+        if k_max < 2:
+            continue
+        # Post-gap audio window: from the ANCHOR cue's own end (not the
+        # next cue's start) -- when the main pass absorbed a repeated
+        # second pass, the echo audio lives INSIDE the "gap" between the
+        # anchor end and the next cue start, and starting at next-cue
+        # start skips over it entirely. Up to 3x the first-pass phrase
+        # duration (generous: repeats can be slower).
+        post_start = cues[i]["end_frame"] + 1
+        if post_start >= T - 1:
+            continue
+        best = None  # (K, word_indices, s2, e2, tok_spans, ext1, path1, win_start)
+        for K in range(2, k_max + 1):
+            word_indices = list(range(i - K + 1, i + 1))
+            if any(j in consumed_idx for j in word_indices):
+                continue
+            phrase_token_ids, _ = build_phrase_ids(
+                word_indices, cues, combined_token_ids)
+            if not phrase_token_ids:
+                continue
+            # First-pass expected duration from main-pass cue spans.
+            first_dur = sum(cues[j]["end_frame"] - cues[j]["start_frame"] + 1
+                            for j in word_indices)
+            if first_dur <= 0:
+                continue
+            win_end = min(T - 1,
+                          post_start + int(3.0 * first_dur) + 8)
+            if win_end - post_start + 1 < len(phrase_token_ids):
+                continue
+            win_lp = np.ascontiguousarray(
+                log_probs_np[post_start:win_end + 1], dtype=np.float32)
+            ext1, path1, _ = fast_ctc_align_c(
+                win_lp, phrase_token_ids, blank_id)
+            if ext1 is None or path1 is None:
+                continue
+            n_states = len(ext1)
+            f_seen = np.full(n_states, -1, dtype=np.int64)
+            l_seen = np.full(n_states, -1, dtype=np.int64)
+            for t, s in enumerate(path1):
+                s = int(s)
+                if 0 <= s < n_states:
+                    if f_seen[s] < 0:
+                        f_seen[s] = t
+                    l_seen[s] = t
+            # All phrase tokens must be visited.
+            Lstan = len(phrase_token_ids)
+            need = np.arange(Lstan) * 2 + 1
+            if np.any(f_seen[need] < 0) or np.any(l_seen[need] < 0):
+                continue
+            s0 = int(f_seen[1])
+            e0 = int(l_seen[2 * Lstan - 1])
+            if e0 <= s0:
+                continue
+            # Onset gate: a genuine immediate repeat starts at the window
+            # start (right after the gap). If the phrase's first token
+            # first appears deep inside the window, the aligner fitted the
+            # phrase to its own continuation downstream -- not a repeat.
+            # 25 frames = 1.0s tolerance for gap decay/breath.
+            if s0 > 25:
+                continue
+            # Strictly-after gate: the match must start AFTER the anchor
+            # cue's own end. Otherwise the phrase matched its own
+            # first-pass audio (self-match through overlapping/absorbed
+            # cue spans), not a genuine second utterance.
+            if post_start + s0 <= cues[i]["end_frame"] + 2:
+                continue
+            # Per-word spans + bilateral gates (mirror C thresholds).
+            tok_spans = {}
+            all_ok = True
+            for m, j in enumerate(word_indices):
+                nt = len(cues[j]["token_positions"])
+                off = sum(len(cues[jj]["token_positions"])
+                          for jj in word_indices[:m])
+                ts, ss, se = token_frame_spans_fn(
+                    _positions_for(off, nt), f_seen, l_seen)
+                if ss is None or se is None or ts is None:
+                    all_ok = False
+                    break
+                tok_spans[j] = (ss, se, ts)
+            if not all_ok:
+                continue
+            avg = avg_logprob_along_path(win_lp, ext1, path1, s0, e0)
+            # Forward stage demands a CLEAR margin above the floor (not just
+            # clearing it): single-phrase forced alignment has no null
+            # hypothesis, so a weak fit to post-gap audio would flag
+            # everywhere. 1.0 nats bar + free-decode cross-check below.
+            if avg < confidence_floor + 1.0:
+                continue
+            # Symmetry gate: the match must fit nearly as well as the
+            # phrase's own first-pass fit. A wrong-words fit scores far
+            # worse than the phrase sung normally; 1.5 nats separates
+            # genuine second utterances from forced fits.
+            _f0 = cues[word_indices[0]]["start_frame"]
+            _f1 = cues[word_indices[-1]]["end_frame"]
+            _first_avg = fast_avg_logprob_fn(_f0, _f1)
+            dur = e0 - s0 + 1
+            if __import__('os').environ.get('QFA_DEBUG_ANCHOR'):
+                import sys as _sys
+                print(f"[fwd] K={K} words={[cues[j]['word'] for j in word_indices]} "
+                      f"bilat={avg:.3f} first={_first_avg:.3f} floor={confidence_floor:.3f} "
+                      f"dur={dur} post_start={post_start}",
+                      file=_sys.stderr, flush=True)
+            if abs(avg - _first_avg) > 1.5:
+                continue
+            per_ok = True
+            for j in word_indices:
+                ss, se, _ = tok_spans[j]
+                a = avg_logprob_along_path(win_lp, ext1, path1, ss, se)
+                if a < confidence_floor - 0.75:
+                    per_ok = False
+                    break
+            if not per_ok:
+                continue
+            if dur < len(word_indices) * int(min_word_dur_frames):
+                continue
+
+            # Free-decode cross-check (gate-5 philosophy): the window's
+            # greedy collapse must look like the phrase twice. Kills fits
+            # where forced alignment crams a phrase into unrelated audio.
+            from ..decode import greedy_ctc_decode_ids as _greedy, token_id_levenshtein_ratio as _lev
+            _dec = _greedy(win_lp, blank_id)
+            _ph = list(phrase_token_ids)
+            _db = _ph + _ph
+            _rd = _lev(_dec, _db)
+            _rs = _lev(_dec, _ph)
+            if _rd < 0.40 or (_rd - _rs) < -0.43:
+                continue
+            # Best-K by score (bilateral + margin term), NOT widest:
+            # widest-wins rewards long phrases absorbing non-repeat audio.
+            _score = avg + (_rd - _rs) * 0.1
+            if best is None or _score > best[0]:
+                best = (_score, K, word_indices, s0, e0, tok_spans,
+                        ext1, path1, post_start)
+        if best is None:
+            continue
+        # Same-word coincidence veto: a second-pass word overlapping
+        # (>50%) a main-pass cue of the SAME word text is the first pass
+        # itself, not a repeat (kills chimeras whose tail re-matches
+        # following first-pass words, e.g. wa-in..adl after a genuine
+        # allah..shafee3 repeat).
+        _bscore, _bK, _bwords, _bs0, _be0, _btok, _bext, _bpath, _bwin = best
+        _veto = False
+        for _j in _bwords:
+            _w = cues[_j].get("word")
+            _ms, _me = _btok[_j][0] + _bwin, _btok[_j][1] + _bwin
+            for _q in range(num_cues):
+                if cues[_q].get("word") != _w:
+                    continue
+                _qs, _qe = cues[_q]["start_frame"], cues[_q]["end_frame"]
+                _ov = max(0, min(_me, _qe) - max(_ms, _qs) + 1)
+                _spanlen = (_me - _ms + 1)
+                if _spanlen > 0 and _ov / _spanlen > 0.5:
+                    # Same word already timed here by the main pass: this
+                    # "copy" is the first pass itself. Veto the WHOLE
+                    # candidate (a chimera), not just the word.
+                    _veto = True
+                    break
+            if _veto:
+                break
+        if _veto:
+            continue
+        _score, K, word_indices, s0, e0, tok_spans, ext1, path1, win_start = best
+        if best is None:
+            continue
+        _, K, word_indices, s0, e0, tok_spans, ext1, path1, win_start = best
+        # Splice: original cues keep is_repeat=False with re-cut spans is
+        # NOT attempted (main-pass spans stand); append second-pass copies.
+        per_word_copy2 = {}
+        for j in word_indices:
+            ss, se, ts = tok_spans[j]
+            per_word_copy2[j] = (ss, se, ts)
+        # Shift token spans into utterance frame coordinates.
+        for j in word_indices:
+            ss, se, ts = per_word_copy2[j]
+            shifted = [(a + win_start, b + win_start) for (a, b) in ts]
+            orig = cues[j]
+            fixed.append(spliced_cue_fn(
+                orig, ss + win_start, se + win_start, shifted,
+                0, ext1, path1, True))
+            fixed[-1]["repeat_stage"] = "forward-gap"
+            consumed_idx.add(j)
+    # Extension pass: for each STAGE-1 accepted fix, try widening LEFT to
+    # cover words the backward sweep could not reach (e.g. an 8-word repeat
+    # first caught as 6 words: the missing left words were never anomalous,
+    # so no anchor ever swept them). Re-test the widened phrase (extra left
+    # words + accepted words) against the SAME second-pass audio region via
+    # forced alignment; all stage-2 gates apply. On pass, append the extra
+    # words' second-pass copies.
+    import os as _os2
+    _no_extend = _os2.environ.get("QFA_DISABLE_EXTEND", "") != ""
+    for _anchor_i, (_w_idx, _a, _b, _ws, _e2, _p2) in accepted_fixes.items():
+        if _no_extend:
+            continue
+        from .extend_fix import extend_fix_left
+        extend_fix_left(
+            _w_idx, cues, combined_token_ids, blank_id,
+            min_word_dur_frames, confidence_floor,
+            log_probs_np, seconds_per_frame, token_frame_spans_fn,
+            spliced_cue_fn, fixed, consumed_idx, build_phrase_ids,
+        )
+    fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
     return fixed
