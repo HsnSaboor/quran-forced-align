@@ -593,7 +593,52 @@ int fast_detect_and_fix_repeats_engine(
                 }
             }
             if (word_failed) continue;
-            
+
+            // COPY2 SELF-MATCH VETO (same-word-elsewhere calibration):
+            // the claimed second utterance must be audio the main pass did
+            // NOT already time as a DIFFERENT same-ayah cue. If a copy2
+            // word's fitted span lies INSIDE a different same-ayah cue's
+            // own [start,end] span, the doubled fit has re-fit that later
+            // cue's own audio -- its tokens score well there because they
+            // ARE that cue -- and the "repeat" is that cue itself, not a
+            // second utterance of the phrase word. Veto the WHOLE candidate
+            // (one self-matched word poisons the joint K-window fit).
+            // Span containment (not exact start equality): chimera copies
+            // can sit exactly on, or 1 frame inside, the later cue.
+            // A word is SKIPPED (not vetoed) when the containing cue is
+            // the phrase's own immediate successor (m == i+1) AND the copy2
+            // word's fitted span OVERLAPS the anchor cue's own span: that
+            // geometry is the absorbed-echo signature (the true second
+            // pass is squeezed between the anchor end and the next cue, so
+            // the fitted copy2 bleeds back over the anchor's own audio),
+            // not a wrong-word fit. Wrong-word chimeras (6:52 w15 copy2 at
+            // [22367,22391] vs anchor [22207,22244]: no overlap) still veto.
+            {
+                int sm_veto = 0;
+                {
+                    int sm_acc = 0;
+                    for (int j = j0; j <= i && !sm_veto; ++j) {
+                        int sm_count = cue_token_counts[j];
+                        int sm_s2 = first_seen[2 * (L + sm_acc) + 1];
+                        int sm_e2 = last_seen[2 * (L + sm_acc + sm_count - 1) + 1];
+                        sm_acc += sm_count;
+                        if (sm_s2 < 0 || sm_e2 < 0) continue;
+                        int sm_c2s = window_start + sm_s2;
+                        int sm_c2e = window_start + sm_e2;
+                        for (int m = 0; m < num_cues; ++m) {
+                            if (m >= j0 && m <= i) continue;
+                            if (cue_ayas[m] != cue_ayas[i] ||
+                                cue_suras[m] != cue_suras[i]) continue;
+                            if (cue_starts[m] <= sm_c2s && sm_c2e <= cue_ends[m]) {
+                                if (m == i + 1 && sm_c2s <= cue_ends[j] && cue_starts[j] <= sm_c2e) continue;
+                                sm_veto = 1; break;
+                            }
+                        }
+                    }
+                }
+                if (sm_veto) continue;
+            }
+
             int gap_frames = copy2_start_local - copy1_end_local;
             float margin_above_floor = bilateral - confidence_floor;
             if (gap_frames <= gap_artifact_max_frames && margin_above_floor < gap_artifact_min_margin) continue;
@@ -858,6 +903,36 @@ int fast_detect_and_fix_repeats_engine(
                     }
                 }
                 if (word_failed) continue;
+
+                // COPY2 SELF-MATCH VETO (same as the main sweep: the
+                // claimed second utterance must be audio the main pass did
+                // NOT already time as a different same-ayah cue; same
+                // absorbed-echo skip as the main sweep).
+                {
+                    int sm_veto = 0;
+                    {
+                        int sm_acc = 0;
+                        for (int j = j0; j <= i && !sm_veto; ++j) {
+                            int sm_count = cue_token_counts[j];
+                            int sm_s2 = first_seen[2 * (L + sm_acc) + 1];
+                            int sm_e2 = last_seen[2 * (L + sm_acc + sm_count - 1) + 1];
+                            sm_acc += sm_count;
+                            if (sm_s2 < 0 || sm_e2 < 0) continue;
+                            int sm_c2s = window_start + sm_s2;
+                            int sm_c2e = window_start + sm_e2;
+                            for (int m = 0; m < num_cues; ++m) {
+                                if (m >= j0 && m <= i) continue;
+                                if (cue_ayas[m] != cue_ayas[i] ||
+                                    cue_suras[m] != cue_suras[i]) continue;
+                                if (cue_starts[m] <= sm_c2s && sm_c2e <= cue_ends[m]) {
+                                    if (m == i + 1 && sm_c2s <= cue_ends[j] && cue_starts[j] <= sm_c2e) continue;
+                                    sm_veto = 1; break;
+                                }
+                            }
+                        }
+                    }
+                    if (sm_veto) continue;
+                }
 
                 int gap_frames = copy2_start_local - copy1_end_local;
                 float margin_above_floor = bilateral - confidence_floor;
