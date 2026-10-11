@@ -148,7 +148,17 @@ def _detect_and_fix_repeats_pass(
        as anomalous in step 1). A path that only exists because the DP
        always finds *a* path through the trellis -- not because the model
        is actually confident there's a matching phoneme sequence there --
-       shows up as a much lower (more negative) average here.
+       shows up as a much lower (more negative) average here. The per-word
+       form of this check (in `_fast_ops.c`, both gate-5 sweeps) additionally
+       carries (a) a DURATION-ASYMMETRY EXEMPTION: a genuine second
+       utterance sung faster than the first trips the 1.0-nat copy-agreement
+       bar through tempo alone (adv_ayahx w5: 12 vs 9 frames, hi-lo 1.351),
+       so the agreement bar applies only when the copies are
+       duration-asymmetric (>4x -- the 6:70 force-split FP was 15x); and
+       (b) a COPY2-CONTIGUITY VETO: the claimed second utterance must be
+       one contiguous sung pass (no >25-frame inter-word leap inside
+       copy2 -- the adv_triple K=6 chimera stitched passes 101 frames apart;
+       genuine passes show <= ~12-frame breath gaps).
 
     3. WIDENED K-WORD-WINDOW SEARCH (recall fix). A real hifz-practice
        repeat is usually a PHRASE of several words, not a single word.
@@ -798,20 +808,24 @@ def _forward_echo_pass(
                 0, ext1, path1, True))
             fixed[-1]["repeat_stage"] = "forward-gap"
             consumed_idx.add(j)
-    # Extension pass: for each STAGE-1 accepted fix, try widening LEFT to
-    # cover words the backward sweep could not reach (e.g. an 8-word repeat
-    # first caught as 6 words: the missing left words were never anomalous,
-    # so no anchor ever swept them). Re-test the widened phrase (extra left
-    # words + accepted words) against the SAME second-pass audio region via
-    # forced alignment; all stage-2 gates apply. On pass, append the extra
-    # words' second-pass copies.
+    # Extension pass: for each STAGE-1 accepted fix, try widening RIGHT to
+    # cover words PAST the anchor whose first pass was ABSORBED into the
+    # stretched anchor span (e.g. Ghailan 6:99: K=3 wins on w7-9 at anchor
+    # w9, but w10-11's first pass [48162,48217] sits absorbed inside the
+    # same anchor span with their second pass [48280,48324] right after;
+    # the doubled w7-11 fit over [48098,48324] is perfect: bilateral
+    # -0.00, rd=1.0, margin +0.5). Re-test the widened phrase (accepted
+    # words + extra right words) DOUBLED over the widened window; all
+    # stage-1 gates apply. On pass, append the extra words' second-pass
+    # copies. C-engine wins that legitimately END at the anchor are
+    # unaffected (no rightward widening passes the doubled gates).
     import os as _os2
     _no_extend = _os2.environ.get("QFA_DISABLE_EXTEND", "") != ""
     for _anchor_i, (_w_idx, _a, _b, _ws, _e2, _p2) in accepted_fixes.items():
         if _no_extend:
             continue
-        from .extend_fix import extend_fix_left
-        extend_fix_left(
+        from .extend_fix import extend_fix_right
+        extend_fix_right(
             _w_idx, cues, combined_token_ids, blank_id,
             min_word_dur_frames, confidence_floor,
             log_probs_np, seconds_per_frame, token_frame_spans_fn,
