@@ -594,6 +594,87 @@ int fast_detect_and_fix_repeats_engine(
             }
             if (word_failed) continue;
 
+            // COPY2 COPY1-CONTAINMENT VETO (99:w5 calibration): at K=1
+            // (the single-word force-split case), copy2's whole fitted
+            // word span must NOT lie inside the anchor cue's own
+            // [start,end] span. A force-split of ONE utterance fits copy2
+            // back onto the anchor's own audio (99:w5 main-edge: copy2
+            // word [48013,48018] inside anchor [47971,48018] -- the
+            // "second utterance" IS the anchor's own tail). A genuine
+            // absorbed echo sits strictly AFTER the anchor end (156:w11
+            // copy2 [82084,82164] vs anchor end 82077; 152:w11 copy2
+            // [79712,79719] vs anchor end 79711). Multi-word (K>1)
+            // candidates are exempt: their copy2 legitimately overlaps
+            // the stretched anchor's span (99:w7-9, 99:w28-29, 70:w17-24
+            // absorbed echoes), and the edge-ownership veto below already
+            // polices their copy2 quality.
+            if (K == 1) {
+                int cv_s2 = first_seen[2 * (L + 0) + 1];
+                int cv_e2 = last_seen[2 * (L + 0) + 1];
+                if (cv_s2 >= 0 && cv_e2 >= 0) {
+                    int cv_c2s = window_start + cv_s2;
+                    int cv_c2e = window_start + cv_e2;
+                    if (cue_starts[i] <= cv_c2s && cv_c2e <= cue_ends[i]) continue;
+                }
+            }
+
+            // COPY2 EDGE-OWNERSHIP VETO (99:w5 calibration): every copy2
+            // word's FIRST and LAST fitted token frames must be owned by
+            // the fitted token (frame argmax == fitted token id). A
+            // force-split of ONE utterance pins copy2's edge tokens onto
+            // frames owned by something else (99:w5: سسَ fitted at -14.1
+            // on a blank-owned frame, ءِ fitted at -11.2 on an
+            // ءَ-owned frame -- the fit parks edge tokens on non-owned
+            // frames to bridge the silence it must cross). A genuine
+            // second utterance emits the word's tokens in order, so the
+            // fit's edge pins land on owned peaks (99:w7-9 14/14 owned,
+            // 99:w28 5/5, 70:w18-24 all owned; 99:w29's final نَ at -1.88
+            // on a لَ-owned frame and 70:w17's initial لَ at -4.2 on a
+            // للَ-owned frame are INTERIOR-adjacent coarticulation frames
+            // of multi-token words...). Edge disownership on BOTH edges
+            // of the SAME word (99:w5: first AND last disowned) is the
+            // force-split signature: veto when any copy2 word has BOTH
+            // edge tokens disowned. Single-edge misses (99:w29, 70:w17)
+            // pass. Frame-argmax loop is over the word's fitted span only
+            // (small); V is the acoustic vocab size already in scope.
+            {
+                int edge_veto = 0;
+                int edge_acc = 0;
+                for (int j = j0; j <= i && !edge_veto; ++j) {
+                    int edge_count = cue_token_counts[j];
+                    int e_first = 2 * (L + edge_acc);
+                    int e_last = 2 * (L + edge_acc + edge_count - 1);
+                    int f_first = first_seen[e_first + 1];
+                    int l_last = last_seen[e_last + 1];
+                    int own_first = 0, own_last = 0;
+                    if (f_first >= 0) {
+                        int st = path2[f_first];
+                        int tok = ext2[st];
+                        float blp = log_probs[(window_start + f_first) * V + tok];
+                        float mx = blp;
+                        for (int v = 0; v < V; ++v) {
+                            float lv = log_probs[(window_start + f_first) * V + v];
+                            if (lv > mx) mx = lv;
+                        }
+                        own_first = (blp >= mx - 1e-4f);
+                    }
+                    if (l_last >= 0) {
+                        int st = path2[l_last];
+                        int tok = ext2[st];
+                        float blp = log_probs[(window_start + l_last) * V + tok];
+                        float mx = blp;
+                        for (int v = 0; v < V; ++v) {
+                            float lv = log_probs[(window_start + l_last) * V + v];
+                            if (lv > mx) mx = lv;
+                        }
+                        own_last = (blp >= mx - 1e-4f);
+                    }
+                    if (!own_first && !own_last) edge_veto = 1;
+                    edge_acc += edge_count;
+                }
+                if (edge_veto) continue;
+            }
+
             // COPY2 SELF-MATCH VETO (same-word-elsewhere calibration):
             // the claimed second utterance must be audio the main pass did
             // NOT already time as a DIFFERENT same-ayah cue. If a copy2
@@ -903,6 +984,59 @@ int fast_detect_and_fix_repeats_engine(
                     }
                 }
                 if (word_failed) continue;
+
+                // COPY2 COPY1-CONTAINMENT VETO (same as the main sweep:
+                // at K=1 copy2 must not lie inside the anchor's span).
+                if (K == 1) {
+                    int cv_s2 = first_seen[2 * (L + 0) + 1];
+                    int cv_e2 = last_seen[2 * (L + 0) + 1];
+                    if (cv_s2 >= 0 && cv_e2 >= 0) {
+                        int cv_c2s = window_start + cv_s2;
+                        int cv_c2e = window_start + cv_e2;
+                        if (cue_starts[i] <= cv_c2s && cv_c2e <= cue_ends[i]) continue;
+                    }
+                }
+
+                // COPY2 EDGE-OWNERSHIP VETO (same as the main sweep: veto
+                // when any copy2 word has BOTH edge tokens disowned --
+                // the force-split signature).
+                {
+                    int edge_veto = 0;
+                    int edge_acc = 0;
+                    for (int j = j0; j <= i && !edge_veto; ++j) {
+                        int edge_count = cue_token_counts[j];
+                        int e_first = 2 * (L + edge_acc);
+                        int e_last = 2 * (L + edge_acc + edge_count - 1);
+                        int f_first = first_seen[e_first + 1];
+                        int l_last = last_seen[e_last + 1];
+                        int own_first = 0, own_last = 0;
+                        if (f_first >= 0) {
+                            int st = path2[f_first];
+                            int tok = ext2[st];
+                            float blp = log_probs[(window_start + f_first) * V + tok];
+                            float mx = blp;
+                            for (int v = 0; v < V; ++v) {
+                                float lv = log_probs[(window_start + f_first) * V + v];
+                                if (lv > mx) mx = lv;
+                            }
+                            own_first = (blp >= mx - 1e-4f);
+                        }
+                        if (l_last >= 0) {
+                            int st = path2[l_last];
+                            int tok = ext2[st];
+                            float blp = log_probs[(window_start + l_last) * V + tok];
+                            float mx = blp;
+                            for (int v = 0; v < V; ++v) {
+                                float lv = log_probs[(window_start + l_last) * V + v];
+                                if (lv > mx) mx = lv;
+                            }
+                            own_last = (blp >= mx - 1e-4f);
+                        }
+                        if (!own_first && !own_last) edge_veto = 1;
+                        edge_acc += edge_count;
+                    }
+                    if (edge_veto) continue;
+                }
 
                 // COPY2 SELF-MATCH VETO (same as the main sweep: the
                 // claimed second utterance must be audio the main pass did
