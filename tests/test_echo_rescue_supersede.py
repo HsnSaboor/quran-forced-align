@@ -15,7 +15,8 @@ import sys
 
 sys.path.insert(0, "src")
 
-os.environ["QFA_ENABLE_ECHO_RESCUE"] = "1"
+# Rescue is default-ON; clear any kill switch for this module's tests.
+os.environ.pop("QFA_DISABLE_ECHO_RESCUE", None)
 
 import numpy as np
 

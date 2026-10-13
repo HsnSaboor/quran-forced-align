@@ -30,14 +30,14 @@ weaker repeat detector:
   -- the decayed-onset signature (6:156: miss 0.0084, anchor tail
   -0.09/-0.06), as opposed to an absent echo (6:152: miss ~9-12
   nats, best tail token -10.62).
-* The two exempted gates are replaced, per word, by the audio-domain
-  confirmer: BOTH words' fitted copy2 (echo) spans must DTW-match
+* BOTH words' fitted copy2 (echo) spans must DTW-match
   their own FIRST-PASS cue spans (cost <= ECHO_CONFIRM_MAX_COST),
   padded 40ms both sides. The confirmer compares each echo against
   ITSELF, so wrong-word audio absorbed into the window cannot
   confirm (6:156: wrong-word controls 2.82-3.35+).
-* Byte-identical when disabled (default) or when no stage-1 K=1 fix
-  exists at the anchor: the function returns without touching `fixed`.
+* Byte-identical when QFA_DISABLE_ECHO_RESCUE is set or when no
+  stage-1 K=1 fix exists at the anchor: the function returns without
+  touching `fixed`.
 
 Calibrated on Ghailan 6:156 (w10+w11 echo; anchor w11 K=1 accepted;
 widened K=2 copy2-vs-own-cue: w10 DTW 1.59, w11 DTW 1.11).

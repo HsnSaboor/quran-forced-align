@@ -563,15 +563,15 @@ def _detect_and_fix_repeats_pass(
             
     fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
 
-    # Stage 1b (decayed-echo rescue, default OFF -- byte-identical when
-    # disabled): for each stage-1 ACCEPTED K=1 fix, try widening one word
+    # Stage 1b (decayed-echo rescue, default ON -- set QFA_DISABLE_ECHO_RESCUE
+    # to restore the pre-rescue behavior): for each stage-1 ACCEPTED K=1 fix, try widening one word
     # LEFT (the K=1 -> K=2 step the C sweep's K-selection dropped when
     # the left word's echo onset decayed under blank). See
     # `repeats/echo_rescue.py`. Requires the raw waveform (`samples`);
     # without it this stage is skipped. Runs BEFORE the forward pass so
     # the forward stage's consumed_idx sees rescued words.
     import os as _os0
-    if _os0.environ.get("QFA_ENABLE_ECHO_RESCUE", "") != "" and samples is not None:
+    if _os0.environ.get("QFA_DISABLE_ECHO_RESCUE", "") == "" and samples is not None:
         from .echo_rescue import rescue_decayed_echo_left
         _rescue_consumed = set(consumed)
         for _anchor_i in sorted(accepted_fixes):
