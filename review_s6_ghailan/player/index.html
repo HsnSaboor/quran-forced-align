@@ -235,6 +235,7 @@
     border-radius: 2px;
     z-index: 5;
     box-shadow: 0 0 5px rgb(245 158 11 / 0.9);
+    cursor: pointer;
   }
   .timeline-repeat-tick {
     position: absolute;
@@ -243,6 +244,7 @@
     width: 3px;
     background-color: rgb(217 119 6);
     z-index: 6;
+    pointer-events: none;
     pointer-events: none;
   }
 </style>
@@ -708,8 +710,7 @@
 
       span.addEventListener('click', () => {
         if (firstCueStart[d] !== undefined) {
-          els.audio.currentTime = firstCueStart[d];
-          els.audio.play().catch(() => {});
+          seekAudio(firstCueStart[d], `word ${w.word}`);
         }
       });
 
@@ -732,6 +733,24 @@
     return String(n).split('').map(d => ARABIC_INDIC_DIGITS[Number(d)] ?? d).join('');
   }
 
+  // Single seek helper: every click-to-jump path funnels through here so
+  // a rejected seek (e.g. media not yet seekable) surfaces in the status
+  // line instead of failing silently.
+  function seekAudio(t, label) {
+    if (!els.audio) return;
+    const target = Math.max(0, t);
+    try {
+      els.audio.currentTime = target;
+    } catch (err) {
+      els.status.innerHTML = `<span class="text-rose-600 dark:text-rose-400">Seek failed${label ? ` (${label})` : ''}: ${err.message}</span>`;
+      return;
+    }
+    const p = els.audio.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {});
+    }
+  }
+
   function renderTimeline() {
     els.timelineRepeats.innerHTML = '';
     const dur = totalDuration > 0 ? totalDuration : (words.length > 0 ? words[words.length - 1].end : 1);
@@ -745,7 +764,19 @@
       range.className = 'timeline-repeat-range';
       range.style.left = `${l}%`;
       range.style.width = `${w}%`;
-      range.title = `Repeat at ${formatSec(s.start)}: ${s.phrase}`;
+      range.title = `Repeat at ${formatSec(s.start)}: ${s.phrase} — click to jump`;
+      range.setAttribute('role', 'button');
+      range.setAttribute('tabindex', '0');
+      range.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        seekAudio(s.start - REPEAT_JUMP_LEAD_SEC, `repeat ${formatSec(s.start)}`);
+      });
+      range.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          seekAudio(s.start - REPEAT_JUMP_LEAD_SEC, `repeat ${formatSec(s.start)}`);
+        }
+      });
       els.timelineRepeats.appendChild(range);
 
       const tick = document.createElement('div');
@@ -764,8 +795,7 @@
         btn.className = 'inline-flex items-center gap-1 text-xs bg-white/90 dark:bg-stone-900/90 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-700/70 rounded px-2 py-1 text-amber-900 dark:text-amber-200 transition-colors shadow-2xs font-amiri';
         btn.innerHTML = `<span class="font-mono text-[10px] text-amber-600 dark:text-amber-400">${formatSec(s.start)}</span> <span class="font-bold">${s.phrase}</span>`;
         btn.addEventListener('click', () => {
-          els.audio.currentTime = Math.max(0, s.start - REPEAT_JUMP_LEAD_SEC);
-          els.audio.play().catch(() => {});
+          seekAudio(s.start - REPEAT_JUMP_LEAD_SEC, `repeat ${formatSec(s.start)}`);
         });
         els.repeatExplorerList.appendChild(btn);
       });
@@ -1082,8 +1112,7 @@
       target = prevs.length > 0 ? prevs[prevs.length - 1] : repeatSites[repeatSites.length - 1];
     }
     if (target) {
-      els.audio.currentTime = Math.max(0, target.start - REPEAT_JUMP_LEAD_SEC);
-      els.audio.play().catch(() => {});
+      seekAudio(target.start - REPEAT_JUMP_LEAD_SEC, `repeat ${formatSec(target.start)}`);
     }
   }
 
@@ -1173,7 +1202,7 @@
     if (!dur) return;
     const rect = els.timeline.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
-    els.audio.currentTime = pct * dur;
+    seekAudio(pct * dur, 'timeline');
   });
 
   els.prevRepeatBtn.addEventListener('click', () => jumpToRepeat(-1));
