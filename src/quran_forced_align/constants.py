@@ -114,7 +114,11 @@ GAP_ARTIFACT_MIN_MARGIN = 0.5  # nats above confidence_floor. Must be > the 0.03
 #                                                                                          the free decode independently
 #                                                                                          confirms two occurrences.
 #   test_B (GENUINE 4-word repeat, pause)          4     0.4615        0.9231    +0.4615  GENUINE (ground truth, ratified)
-#   test_C (GENUINE 4-word repeat, no pause)       4     0.4615        0.9231    +0.4615  GENUINE (ground truth, ratified)
+#   test_C (GENUINE 4-word repeat, no pause)       4     0.8462        0.4231    -0.4231  GENUINE (ground truth, ratified)
+#     -- ARM-measured release-model row (Oct 2026 gate-5 probe, /tmp/probe_ab/VERDICT.md
+#     §2: release-C K4 rs .8462 / rd .4231 / m -.4231, single-copy greedy, gate-5 PASS but
+#     pipeline flags=0). The .4615/.9231 pair above was a copy-paste of the test_B row;
+#     thresholds 0.40/-0.43 (below) are UNCHANGED by this comment fix.
 #
 # So of the 3 surah cases originally suspected as false positives, only
 # surah 68 aya 26 actually is one under this independent cross-check; surah
@@ -126,6 +130,16 @@ GAP_ARTIFACT_MIN_MARGIN = 0.5  # nats above confidence_floor. Must be > the 0.03
 # real headroom on both sides of this 5-point calibration set.
 FREE_DECODE_MIN_RATIO_DOUBLED = 0.40  # Sits below absorbed single-frame greedy merges (e.g. test_C = 0.423)
 FREE_DECODE_MIN_MARGIN = -0.43         # Allows continuous absorbed repeats (test_C = -0.423) while rejecting single-copy false repeats (margin <= -0.444)
+
+# Onset-decay excuse bounds for the echo-rescue bilateral floor (see
+# repeats/echo_rescue.py). Calibrated on Ghailan 6:156 (genuine decayed
+# echo: whole-copy2 miss 0.0084 nats, anchor tail -0.09/-0.06 vs floor
+# -0.6005) vs 6:152 (no echo: miss ~9-12 nats, best tail token -10.62).
+# The miss bound sits >100x above the genuine 0.0084 yet >100x below
+# the 152 exclusion; the tail bar sits 0.24 below the genuine -0.06
+# yet >10 nats above the nearest exclusion.
+ONSET_EXCUSE_MAX_MISS = 0.05     # max whole-copy2 miss (nats) the excuse can waive
+ONSET_TAIL_CRISP_MARGIN = 0.30   # anchor copy2 tail tokens must clear floor + this
 
 DEFAULT_INTRA_SURAH_MAX_SPLITS = 60  # L1-Cache Optimal Sweet Spot (K=60 concurrency on Tesla T4/A100)
 DEFAULT_INTRA_SURAH_MIN_GAP_FRAMES = 100

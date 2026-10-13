@@ -32,6 +32,7 @@ def detect_and_fix_repeats(
     max_passes=1,
     enable_phon_hint=False,
     seconds_per_frame=None,
+    samples=None,
 ):
     """STEP-2 phonetic hint (gate-5 pause-vs-repeat disambiguation).
 
@@ -63,6 +64,7 @@ def detect_and_fix_repeats(
             max_repeat_window_words=max_repeat_window_words,
             enable_phon_hint=enable_phon_hint,
             seconds_per_frame=seconds_per_frame,
+            samples=samples,
         )
         if len(fixed_cues) == len(current_cues):
             break
@@ -87,6 +89,7 @@ def _detect_and_fix_repeats_pass(
     max_repeat_window_words=DEFAULT_MAX_REPEAT_WINDOW_WORDS,
     enable_phon_hint=False,
     seconds_per_frame=None,
+    samples=None,
 ):
     low_ratio = anomaly_low_ratio
     high_ratio = anomaly_high_ratio
@@ -559,6 +562,50 @@ def _detect_and_fix_repeats_pass(
             fixed.append(_spliced_cue(orig, s2, e2, tok_spans2, window_start, ext2, path2, is_repeat=True))
             
     fixed.sort(key=lambda c: (c["start_frame"], c["end_frame"]))
+
+    # Stage 1b (decayed-echo rescue, default OFF -- byte-identical when
+    # disabled): for each stage-1 ACCEPTED K=1 fix, try widening one word
+    # LEFT (the K=1 -> K=2 step the C sweep's K-selection dropped when
+    # the left word's echo onset decayed under blank). See
+    # `repeats/echo_rescue.py`. Requires the raw waveform (`samples`);
+    # without it this stage is skipped. Runs BEFORE the forward pass so
+    # the forward stage's consumed_idx sees rescued words.
+    import os as _os0
+    if _os0.environ.get("QFA_ENABLE_ECHO_RESCUE", "") != "" and samples is not None:
+        from .echo_rescue import rescue_decayed_echo_left
+        _rescue_consumed = set(consumed)
+        for _anchor_i in sorted(accepted_fixes):
+            _w_idx = accepted_fixes[_anchor_i][0]
+            if list(_w_idx) != [_anchor_i]:
+                continue
+            # The broad K=1 copy2 of the anchor spans BOTH echoes unsplit
+            # (6:156: [3283.36,3286.56] vs the widened w10+w11 split); on a
+            # successful rescue it is superseded by the two narrower K=2
+            # copy2 spans. Snapshot its identity BEFORE the call so it can
+            # be dropped from `fixed` (never by span proximity -- the stale
+            # and superseding spans deliberately overlap). accepted_fixes
+            # value layout: (word_indices, per_word_copy1, per_word_copy2,
+            # window_start, ext2, path2); per_word_copy2[j] is
+            # (start_local, end_local, token_spans).
+            _stale_k1 = None
+            _pw2 = accepted_fixes[_anchor_i][2].get(_anchor_i)
+            if _pw2 is not None:
+                _ws = accepted_fixes[_anchor_i][3]
+                for _c in fixed:
+                    if _c.get("is_repeat") and _c.get("repeat_stage") == "c-engine" \
+                            and (_c["start_frame"], _c["end_frame"]) == (_pw2[0] + _ws, _pw2[1] + _ws):
+                        _stale_k1 = _c
+                        break
+            if rescue_decayed_echo_left(
+                _anchor_i, _w_idx, cues, combined_token_ids, blank_id,
+                min_word_dur_frames, confidence_floor,
+                log_probs_np, seconds_per_frame if seconds_per_frame is not None else 0.04,
+                token_frame_spans, _spliced_cue,
+                fixed, _rescue_consumed,
+                samples,
+            ) and _stale_k1 is not None:
+                fixed.remove(_stale_k1)
+        consumed.update(_rescue_consumed)
 
     # Stage 2 (forward-anchored echo search): the C-engine sweep above looks
     # BACKWARD from anomalous cues, but when a repeated second pass is fully
